@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GLAM / GRUNGE — ブランドユニバース再現デモ</title>
+<meta name="description" content="Awwwards Site of the Day「Serotoninn」の表現技法(キネティックタイポグラフィ・カスタムカーソル・ピン留め横スクロールギャラリー・フィルムグレイン)を学習目的でオリジナル再現したデモ" />
+<style>
+  :root {
+    --bg: #0b0a0c;
+    --bg-2: #141216;
+    --fg: #f3efe6;
+    --fg-dim: #9c968f;
+    --accent: #e4002b;
+    --line: rgba(243, 239, 230, 0.14);
+    --ease: cubic-bezier(.16, 1, .3, 1);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    overflow-x: hidden;
+    cursor: none;
+  }
+  @media (hover: none), (pointer: coarse) {
+    body { cursor: auto; }
+    .cursor-dot, .cursor-ring { display: none; }
+  }
+  a { color: inherit; }
+  ::selection { background: var(--accent); color: #fff; }
+
+  /* ============================================================
+     1. フィルムグレイン(粒状ノイズ)オーバーレイ
+     画面全体に薄いノイズを重ねて「グランジ」な質感を出す定番技法。
+     canvas に毎フレームではなく一定間隔でランダムノイズを描画し、
+     mix-blend-mode で下のコンテンツと馴染ませる。
+     ============================================================ */
+  #grain {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 9998;
+    pointer-events: none;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+  }
+
+  /* ============================================================
+     2. カスタムカーソル(ドット + 追従リング)
+     ドットは指先そのもの、リングはイージングをかけて少し遅れて
+     追いかけることで「粘性のある」動きに見せている。
+     data-cursor="view" を持つ要素にホバーすると
+     リングが拡大して「VIEW」の文字を表示する。
+     ============================================================ */
+  .cursor-dot, .cursor-ring {
+    position: fixed;
+    top: 0; left: 0;
+    pointer-events: none;
+    z-index: 9999;
+    transform: translate(-50%, -50%);
+    will-change: transform;
+  }
+  .cursor-dot {
+    width: 6px; height: 6px;
+    background: var(--fg);
+    border-radius: 50%;
+  }
+  .cursor-ring {
+    width: 40px; height: 40px;
+    border: 1px solid var(--fg);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    letter-spacing: .08em;
+    transition: width .3s var(--ease), height .3s var(--ease),
+                background .3s var(--ease), border-color .3s var(--ease);
+  }
+  .cursor-ring span {
+    opacity: 0;
+    transition: opacity .2s var(--ease);
+  }
+  .cursor-ring.is-view {
+    width: 84px; height: 84px;
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .cursor-ring.is-view span { opacity: 1; }
+
+  /* ============================================================
+     3. ヘッダー(下スクロールで隠れ、上スクロールで再表示)
+     ============================================================ */
+  header.nav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px clamp(20px, 4vw, 48px);
+    transition: transform .5s var(--ease);
+    mix-blend-mode: difference;
+  }
+  header.nav.is-hidden { transform: translateY(-120%); }
+  .nav-logo {
+    font-weight: 800;
+    letter-spacing: .12em;
+    font-size: 14px;
+  }
+  .nav-menu-btn {
+    background: none;
+    border: 1px solid var(--fg);
+    color: var(--fg);
+    font: inherit;
+    font-size: 11px;
+    letter-spacing: .1em;
+    padding: 9px 18px;
+    border-radius: 999px;
+    cursor: none;
+  }
+
+  /* ============================================================
+     4. フルスクリーンメニュー(開くと項目が下から順にせり上がる)
+     ============================================================ */
+  .menu-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 600;
+    background: var(--accent);
+    color: #10050a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    clip-path: circle(0% at calc(100% - 48px) 48px);
+    transition: clip-path .7s var(--ease);
+    pointer-events: none;
+  }
+  .menu-overlay.is-open {
+    clip-path: circle(150% at calc(100% - 48px) 48px);
+    pointer-events: auto;
+  }
+  .menu-list {
+    list-style: none;
+    margin: 0; padding: 0;
+    text-align: center;
+  }
+  .menu-list li {
+    overflow: hidden;
+  }
+  .menu-list a {
+    display: block;
+    font-size: clamp(32px, 7vw, 64px);
+    font-weight: 800;
+    text-decoration: none;
+    padding: 6px 0;
+    transform: translateY(110%);
+    transition: transform .6s var(--ease);
+    transition-delay: calc(var(--i, 0) * 60ms);
+  }
+  .menu-overlay.is-open .menu-list a { transform: translateY(0); }
+
+  main { position: relative; z-index: 1; }
+  section { padding: clamp(90px, 16vh, 160px) clamp(20px, 6vw, 64px); }
+
+  /* ============================================================
+     5. ヒーロー: キネティックタイポグラフィ
+     見出しを1文字ずつ span に分割し、読み込み時に下から
+     順番(stagger)にせり上がらせる。CSS変数 --i を
+     各文字のインデックスとして注入し、transition-delay に使う。
+     ============================================================ */
+  .hero {
+    position: relative;
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding-top: 120px;
+  }
+  .kinetic-title {
+    margin: 0;
+    font-size: clamp(48px, 13vw, 168px);
+    font-weight: 800;
+    line-height: .88;
+    letter-spacing: -.02em;
+    text-transform: uppercase;
+  }
+  .kinetic-title .line { display: block; overflow: hidden; }
+  .kinetic-title .ch {
+    display: inline-block;
+    transform: translateY(105%);
+    opacity: 0;
+    transition: transform .8s var(--ease), opacity .6s var(--ease);
+    transition-delay: calc(var(--i, 0) * 28ms);
+  }
+  .is-loaded .kinetic-title .ch { transform: translateY(0); opacity: 1; }
+  .hero-sub {
+    margin: 28px 2px 0;
+    color: var(--fg-dim);
+    letter-spacing: .18em;
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+  .scroll-hint {
+    position: absolute;
+    bottom: 40px; left: clamp(20px, 6vw, 64px);
+    font-size: 11px;
+    letter-spacing: .18em;
+    color: var(--fg-dim);
+    writing-mode: vertical-rl;
+  }
+  .scroll-hint::before {
+    content: "";
+    display: block;
+    width: 1px; height: 46px;
+    background: var(--line);
+    margin: 0 auto 10px;
+  }
+
+  /* ============================================================
+     6. スクロール連動テキストリベール(行ごとのマスクアニメ)
+     親要素 overflow:hidden の中で文字が下から立ち上がる。
+     IntersectionObserver で画面に入った瞬間に .is-in を付与。
+     ============================================================ */
+  .statement { max-width: 1100px; margin: 0 auto; }
+  .reveal-lines {
+    font-size: clamp(24px, 4.4vw, 46px);
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 0;
+  }
+  .reveal-lines .word-wrap { display: inline-block; overflow: hidden; vertical-align: top; }
+  .reveal-lines .word {
+    display: inline-block;
+    transform: translateY(115%);
+    transition: transform .7s var(--ease);
+    transition-delay: calc(var(--i, 0) * 22ms);
+  }
+  .reveal-lines.is-in .word { transform: translateY(0); }
+
+  /* ============================================================
+     7. ルックブック: ピン留め横スクロールギャラリー
+     セクションの高さを画面の何倍か確保しておき、内側の
+     sticky 要素で画面に留めながら、縦スクロール量に応じて
+     横方向の track を JS で translateX させる定番テクニック。
+     ============================================================ */
+  .lookbook { padding: 0; }
+  .lookbook-spacer { height: 340vh; position: relative; }
+  .lookbook-sticky {
+    position: sticky;
+    top: 0;
+    height: 100svh;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+  }
+  .lookbook-track {
+    display: flex;
+    gap: clamp(16px, 3vw, 32px);
+    padding: 0 6vw;
+    will-change: transform;
+  }
+  .look-card {
+    flex: 0 0 clamp(240px, 32vw, 420px);
+    height: clamp(320px, 62vh, 560px);
+    border-radius: 4px;
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    padding: 22px;
+    overflow: hidden;
+    color: #10050a;
+  }
+  .look-card::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, transparent 40%, rgba(0,0,0,.55));
+    mix-blend-mode: multiply;
+    opacity: .35;
+  }
+  .look-card .look-index {
+    position: relative; z-index: 1;
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: .1em;
+  }
+  .lookbook-progress {
+    position: absolute;
+    left: 6vw; bottom: 34px;
+    height: 2px; width: min(88vw, 640px);
+    background: var(--line);
+  }
+  .lookbook-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    transform-origin: left;
+  }
+
+  .about { max-width: 720px; margin: 0 auto; text-align: left; }
+  .about h2 { font-size: clamp(26px, 4vw, 40px); }
+  .about p { color: var(--fg-dim); line-height: 1.9; font-size: 15px; }
+
+  footer {
+    padding: clamp(70px, 14vh, 140px) clamp(20px, 6vw, 64px) 60px;
+    border-top: 1px solid var(--line);
+    text-align: center;
+  }
+  .cta {
+    font-size: clamp(36px, 9vw, 110px);
+    font-weight: 800;
+    text-transform: uppercase;
+    line-height: .95;
+    margin: 0 0 24px;
+  }
+  footer .credit { color: var(--fg-dim); font-size: 12px; letter-spacing: .06em; }
+  footer .credit a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<canvas id="grain"></canvas>
+<div class="cursor-dot"></div>
+<div class="cursor-ring"><span>VIEW</span></div>
+
+<header class="nav" id="siteNav">
+  <div class="nav-logo">GLAM/GRUNGE</div>
+  <button class="nav-menu-btn" id="menuBtn">MENU</button>
+</header>
+
+<nav class="menu-overlay" id="menuOverlay">
+  <ul class="menu-list">
+    <li><a href="#hero">Home</a></li>
+    <li><a href="#collection">Collection</a></li>
+    <li><a href="#lookbook">Lookbook</a></li>
+    <li><a href="#about">About</a></li>
+  </ul>
+</nav>
+
+<main>
+  <section class="hero" id="hero">
+    <h1 class="kinetic-title" data-kinetic>
+      <span class="line">GLAM</span>
+      <span class="line">MEETS</span>
+      <span class="line">GRUNGE</span>
+    </h1>
+    <p class="hero-sub">SEROTONINN — 2026 CAPSULE COLLECTION (再現デモ / Fictitious Copy)</p>
+    <div class="scroll-hint">SCROLL</div>
+  </section>
+
+  <section class="statement" id="collection">
+    <h2 class="reveal-lines" data-reveal>
+      She wears what she means, not what's trending — a brand universe between glam and grunge.
+    </h2>
+  </section>
+
+  <section class="lookbook" id="lookbook">
+    <div class="lookbook-spacer">
+      <div class="lookbook-sticky">
+        <div class="lookbook-track" id="lookTrack">
+          <!-- look-card は JS で生成(色はグラデーションのプレースホルダー) -->
+        </div>
+        <div class="lookbook-progress"><div class="lookbook-progress-bar" id="lookProgress"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="about" id="about">
+    <h2 class="reveal-lines" data-reveal>About the universe</h2>
+    <p>
+      これは Awwwards Site of the Day に選出された架空の学習用再現デモです。
+      実在サイトのコード・画像・映像は一切使用せず、観察した「表現技法」だけを
+      ゼロから自分の実装で組み立てています。詳しくは同フォルダの README.md を参照してください。
+    </p>
+  </section>
+</main>
+
+<footer>
+  <h2 class="cta reveal-lines" data-reveal>Join the universe</h2>
+  <p class="credit">学習用再現デモ — 元サイト: <a href="https://serotoninn.com/" target="_blank" rel="noopener">serotoninn.com</a>(Awwwards SOTD)</p>
+</footer>
+
+<script>
+/* ================================================================
+ * 以下、このデモを構成する再利用可能なユーティリティ関数群。
+ * どれも依存ライブラリなしのバニラJSで、そのままコピーして
+ * 自分のプロジェクトに組み込めるように単機能で書いています。
+ * ================================================================ */
+
+/**
+ * initGrain(canvasEl)
+ * キャンバスにランダムノイズを一定間隔で描画し、フィルムグレイン風の
+ * 質感を作る。低解像度で描いてCSSで引き伸ばすことで軽量に動作させる。
+ */
+function initGrain(canvas) {
+  const ctx = canvas.getContext('2d');
+  const SCALE = 0.25; // 内部解像度を下げて負荷を軽減
+  let w, h;
+
+  function resize() {
+    w = canvas.width = Math.floor(window.innerWidth * SCALE);
+    h = canvas.height = Math.floor(window.innerHeight * SCALE);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function draw() {
+    const imageData = ctx.createImageData(w, h);
+    const buf = imageData.data;
+    for (let i = 0; i < buf.length; i += 4) {
+      const v = (Math.random() * 255) | 0;
+      buf[i] = buf[i + 1] = buf[i + 2] = v;
+      buf[i + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }
+
+  // 毎フレームだと画面がチカチカしすぎるので、少し間引く
+  let last = 0;
+  function loop(t) {
+    if (t - last > 90) { draw(); last = t; }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+}
+
+/**
+ * initCustomCursor({ dotEl, ringEl, viewSelector })
+ * ドット要素はポインタにそのまま追従し、リング要素はイージングで
+ * 遅れて追いかける。viewSelector に一致する要素にホバーすると
+ * リングが拡大して "VIEW" ラベルを表示する。
+ */
+function initCustomCursor({ dotEl, ringEl, viewSelector }) {
+  let mouseX = window.innerWidth / 2;
+  let mouseY = window.innerHeight / 2;
+  let ringX = mouseX, ringY = mouseY;
+
+  window.addEventListener('pointermove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    dotEl.style.transform = `translate(${mouseX}px, ${mouseY}px) translate(-50%, -50%)`;
+  });
+
+  document.querySelectorAll(viewSelector).forEach((el) => {
+    el.addEventListener('mouseenter', () => ringEl.classList.add('is-view'));
+    el.addEventListener('mouseleave', () => ringEl.classList.remove('is-view'));
+  });
+
+  function tick() {
+    // 線形補間(lerp)でリングをゆっくり追従させ、粘性のある動きにする
+    ringX += (mouseX - ringX) * 0.16;
+    ringY += (mouseY - ringY) * 0.16;
+    ringEl.style.transform = `translate(${ringX}px, ${ringY}px) translate(-50%, -50%)`;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+/**
+ * splitIntoChars(el) / splitIntoWords(el)
+ * テキストを1文字 or 1単語ごとの <span> に分解し、各 span に
+ * CSS変数 --i (出現順インデックス)を注入する。
+ * CSS側で transition-delay: calc(var(--i) * 数値) を指定しておけば
+ * それだけで「順番にせり上がる」ストップモーション風演出になる。
+ */
+function splitIntoChars(lineEl) {
+  const text = lineEl.textContent;
+  lineEl.textContent = '';
+  [...text].forEach((ch, i) => {
+    const span = document.createElement('span');
+    span.className = 'ch';
+    span.style.setProperty('--i', i);
+    span.textContent = ch === ' ' ? ' ' : ch;
+    lineEl.appendChild(span);
+  });
+}
+
+function splitIntoWords(el) {
+  const text = el.textContent.trim();
+  el.textContent = '';
+  text.split(/\s+/).forEach((word, i) => {
+    const wrap = document.createElement('span');
+    wrap.className = 'word-wrap';
+    const inner = document.createElement('span');
+    inner.className = 'word';
+    inner.style.setProperty('--i', i);
+    inner.textContent = word;
+    wrap.appendChild(inner);
+    el.appendChild(wrap);
+    el.appendChild(document.createTextNode(' '));
+  });
+}
+
+/**
+ * observeReveal(selector, activeClass)
+ * IntersectionObserver で要素が画面に入ったタイミングを検知し、
+ * activeClass を付与するだけの汎用スクロールリベーラー。
+ * GSAP の ScrollTrigger が内部でやっていることの最小実装版。
+ */
+function observeReveal(selector, activeClass = 'is-in') {
+  const els = document.querySelectorAll(selector);
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add(activeClass);
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.35 });
+  els.forEach((el) => io.observe(el));
+}
+
+/**
+ * initHideOnScrollNav(navEl)
+ * 下にスクロールしたらヘッダーを隠し、上にスクロールしたら
+ * 再表示する。ファッション/ラグジュアリー系サイトでよく使われる、
+ * コンテンツを広く見せるためのナビゲーション演出。
+ */
+function initHideOnScrollNav(navEl) {
+  let lastY = window.scrollY;
+  window.addEventListener('scroll', () => {
+    const y = window.scrollY;
+    const goingDown = y > lastY;
+    navEl.classList.toggle('is-hidden', goingDown && y > 140);
+    lastY = y;
+  }, { passive: true });
+}
+
+/**
+ * initMenuOverlay(btnEl, overlayEl)
+ * ハンバーガーボタンでフルスクリーンメニューを開閉する。
+ * メニュー項目には --i を付与し、CSSの transition-delay で
+ * 順番にせり上がるようにしている(初期化時に一度だけ実行すればよい)。
+ */
+function initMenuOverlay(btnEl, overlayEl) {
+  overlayEl.querySelectorAll('.menu-list a').forEach((a, i) => {
+    a.style.setProperty('--i', i);
+  });
+  let open = false;
+  btnEl.addEventListener('click', () => {
+    open = !open;
+    overlayEl.classList.toggle('is-open', open);
+    btnEl.textContent = open ? 'CLOSE' : 'MENU';
+    document.body.style.overflow = open ? 'hidden' : '';
+  });
+  overlayEl.querySelectorAll('a').forEach((a) => {
+    a.addEventListener('click', () => {
+      open = false;
+      overlayEl.classList.remove('is-open');
+      btnEl.textContent = 'MENU';
+      document.body.style.overflow = '';
+    });
+  });
+}
+
+/**
+ * initPinnedHorizontalGallery({ spacerEl, trackEl, progressEl, cursorSelector })
+ * 縦にスクロールされた量を、ギャラリー内では横方向の移動量に変換する
+ * 「ピン留め横スクロール」の実装。position:sticky で画面に固定した
+ * コンテナの中で、外側スペーサーのスクロール進捗(0〜1)を計算し、
+ * track を translateX するだけのシンプルな仕組み。
+ */
+function initPinnedHorizontalGallery({ spacerEl, trackEl, progressEl }) {
+  // プレースホルダーの「ルック」カードを生成(実サイトの画像は使わず、
+  // グラデーションと番号だけで構成したオリジナルのプレースホルダー)
+  const palettes = [
+    'linear-gradient(150deg,#e4002b,#4a0716)',
+    'linear-gradient(150deg,#f3efe6,#b8afa0)',
+    'linear-gradient(150deg,#2b2b2f,#0b0a0c)',
+    'linear-gradient(150deg,#e4002b,#141216)',
+    'linear-gradient(150deg,#b8afa0,#3a352f)',
+  ];
+  palettes.forEach((bg, i) => {
+    const card = document.createElement('div');
+    card.className = 'look-card';
+    card.setAttribute('data-cursor', 'view');
+    card.style.background = bg;
+    card.innerHTML = `<span class="look-index">LOOK ${String(i + 1).padStart(2, '0')}</span>`;
+    trackEl.appendChild(card);
+  });
+
+  function update() {
+    const rect = spacerEl.getBoundingClientRect();
+    const scrollable = spacerEl.offsetHeight - window.innerHeight;
+    const progress = Math.min(1, Math.max(0, -rect.top / scrollable));
+    const maxTranslate = trackEl.scrollWidth - window.innerWidth + 64;
+    trackEl.style.transform = `translateX(${-progress * maxTranslate}px)`;
+    progressEl.style.width = `${progress * 100}%`;
+    requestAnimationFrame(update);
+  }
+  requestAnimationFrame(update);
+}
+
+/* ---------------- 初期化 ---------------- */
+document.addEventListener('DOMContentLoaded', () => {
+  initGrain(document.getElementById('grain'));
+
+  initCustomCursor({
+    dotEl: document.querySelector('.cursor-dot'),
+    ringEl: document.querySelector('.cursor-ring'),
+    viewSelector: '[data-cursor="view"], a, button',
+  });
+
+  document.querySelectorAll('.kinetic-title .line').forEach(splitIntoChars);
+  document.querySelectorAll('[data-reveal]').forEach(splitIntoWords);
+  observeReveal('[data-reveal]');
+
+  initHideOnScrollNav(document.getElementById('siteNav'));
+  initMenuOverlay(document.getElementById('menuBtn'), document.getElementById('menuOverlay'));
+
+  initPinnedHorizontalGallery({
+    spacerEl: document.querySelector('.lookbook-spacer'),
+    trackEl: document.getElementById('lookTrack'),
+    progressEl: document.getElementById('lookProgress'),
+  });
+
+  // ヒーローのキネティックタイトルはページ読み込み直後に発火させる
+  requestAnimationFrame(() => document.body.classList.add('is-loaded'));
+});
+</script>
+</body>
+</html>

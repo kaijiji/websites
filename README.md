@@ -13,3 +13,4 @@ Awwwards・CSS Design Awards・FWA などで評価されたサイトを1つず�
 | --- | --- | --- | --- | --- |
 | 2026-08-07 | Bruno Simon — Portfolio | https://bruno-simon.com | WebGL(Three.js) + 物理演算(cannon-es)による3Dドライビング・ポートフォリオ | [sites/2026-08-07-bruno-simon-portfolio](sites/2026-08-07-bruno-simon-portfolio) |
 | 2026-08-07 | Lacoste — Ace Breaker | https://members-play.lacoste.com/ace-breaker-rg/ | WebGL(Three.js)による3Dブロック崩しのブラウザゲーム演出(パーティクル・カメラシェイク・コンボ) | [sites/2026-08-07-lacoste-ace-breaker](sites/2026-08-07-lacoste-ace-breaker) |
+| 2026-08-07 | Serotoninn | https://serotoninn.com/ | キネティックタイポグラフィ・カスタムカーソル・ピン留め横スクロールギャラリー・フィルムグレイン演出を持つファッションブランドサイト | [sites/2026-08-07-serotoninn-brand-universe](sites/2026-08-07-serotoninn-brand-universe) |
