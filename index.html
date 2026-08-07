@@ -100,8 +100,6 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    text-decoration: none;
-    color: inherit;
     transition: transform .15s ease, border-color .15s ease, background .15s ease;
   }
   .card:hover {
@@ -136,13 +134,34 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  .card .open {
+  .card .actions {
     margin-top: auto;
-    padding-top: 10px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--accent);
+    padding-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
+  .btn {
+    display: inline-block;
+    font-size: 12.5px;
+    font-weight: 600;
+    text-decoration: none;
+    padding: 7px 12px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    transition: opacity .15s ease, background .15s ease;
+  }
+  .btn-primary {
+    color: #0b1220;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  }
+  .btn-primary:hover { opacity: .88; }
+  .btn-secondary {
+    color: var(--text);
+    background: transparent;
+    border-color: var(--border);
+  }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
 
   footer {
     text-align: center;
@@ -230,23 +249,29 @@ function dateFromSlug(slug) {
 }
 
 function renderCard(entry) {
-  const a = document.createElement("a");
-  a.className = "card";
-  a.href = `sites/${entry.name}/index.html`;
+  const card = document.createElement("div");
+  card.className = "card";
 
   const date = dateFromSlug(entry.name);
   const title = escapeHtml(entry.info.title);
   const src = entry.info.sourceUrl ? escapeHtml(entry.info.sourceUrl) : "";
   const desc = escapeHtml(entry.info.desc);
 
-  a.innerHTML = `
+  card.innerHTML = `
     ${date ? `<div class="date">${date}</div>` : ""}
     <h2>${title}</h2>
     ${src ? `<div class="src">${src}</div>` : ""}
     <p class="desc">${desc}</p>
-    <div class="open">デモを開く →</div>
+    <div class="actions">
+      <a class="btn btn-primary" href="sites/${entry.name}/index.html">再現デモを開く →</a>
+      ${
+        entry.info.sourceUrl
+          ? `<a class="btn btn-secondary" href="${escapeHtml(entry.info.sourceUrl)}" target="_blank" rel="noopener">元のサイトを見る ↗</a>`
+          : ""
+      }
+    </div>
   `;
-  return a;
+  return card;
 }
 
 async function main() {
