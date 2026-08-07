@@ -12,3 +12,4 @@ Awwwards・CSS Design Awards・FWA などで評価されたサイトを1つず�
 | 日付 | サイト名 | 参照元URL | 主な表現技法 | フォルダ |
 | --- | --- | --- | --- | --- |
 | 2026-08-07 | Bruno Simon — Portfolio | https://bruno-simon.com | WebGL(Three.js) + 物理演算(cannon-es)による3Dドライビング・ポートフォリオ | [sites/2026-08-07-bruno-simon-portfolio](sites/2026-08-07-bruno-simon-portfolio) |
+| 2026-08-07 | Lacoste — Ace Breaker | https://members-play.lacoste.com/ace-breaker-rg/ | WebGL(Three.js)による3Dブロック崩しのブラウザゲーム演出(パーティクル・カメラシェイク・コンボ) | [sites/2026-08-07-lacoste-ace-breaker](sites/2026-08-07-lacoste-ace-breaker) |

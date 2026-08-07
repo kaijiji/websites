@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>コート・ブレイカー — 3Dブロック崩し再現デモ</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎾</text></svg>" />
+<style>
+  :root{
+    --court:   #0b3d20;
+    --line:    #f5f5f0;
+    --ball:    #d7f24b;
+    --accent:  #ffd400;
+    --panel:   rgba(5, 20, 12, 0.72);
+    --text:    #f5f5f0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #04160c;
+    color: var(--text);
+    font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+  #app { position: relative; width: 100%; height: 100%; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  /* ---- HUD ---- */
+  .hud {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 18px 22px;
+    pointer-events: none;
+    font-weight: 700;
+    letter-spacing: .04em;
+  }
+  .hud .chip {
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 999px;
+    padding: 8px 16px;
+    font-size: 13px;
+    backdrop-filter: blur(6px);
+  }
+  .hud .score { font-size: 22px; color: var(--accent); }
+  .hud .combo {
+    margin-top: 6px; font-size: 12px; color: var(--ball);
+    opacity: 0; transform: translateY(-4px); transition: opacity .15s ease, transform .15s ease;
+  }
+  .hud .combo.show { opacity: 1; transform: translateY(0); }
+  .lives { display: flex; gap: 6px; }
+  .lives span { font-size: 18px; opacity: .35; }
+  .lives span.alive { opacity: 1; }
+
+  .powerup-banner {
+    position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
+    background: var(--accent); color: #10230f; font-weight: 800; font-size: 12px;
+    padding: 6px 14px; border-radius: 999px; letter-spacing: .06em;
+    opacity: 0; transition: opacity .2s ease, transform .2s ease;
+    pointer-events: none;
+  }
+  .powerup-banner.show { opacity: 1; }
+
+  /* ---- overlay screens ---- */
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px;
+    background: radial-gradient(circle at 50% 40%, rgba(11,61,32,.92), rgba(2,10,6,.97));
+    text-align: center;
+    padding: 24px;
+  }
+  .overlay.hidden { display: none; }
+  .overlay h1 {
+    margin: 0; font-size: clamp(28px, 6vw, 46px); font-weight: 900;
+    color: var(--accent); letter-spacing: .01em;
+  }
+  .overlay p { margin: 0; max-width: 420px; color: #cfe8d8; font-size: 14px; line-height: 1.7; }
+  .btn {
+    pointer-events: auto;
+    cursor: pointer;
+    border: none;
+    background: linear-gradient(90deg, var(--ball), var(--accent));
+    color: #0c2010;
+    font-weight: 800;
+    font-size: 15px;
+    padding: 14px 34px;
+    border-radius: 999px;
+    letter-spacing: .03em;
+    transition: transform .12s ease;
+  }
+  .btn:active { transform: scale(.95); }
+
+  .hint {
+    position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: #cfe8d8; opacity: .75; pointer-events: none;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="hud">
+    <div>
+      <div class="chip score" id="scoreChip">SCORE 0</div>
+      <div class="combo" id="comboChip">COMBO x1</div>
+    </div>
+    <div class="chip lives" id="livesChip"></div>
+  </div>
+
+  <div class="powerup-banner" id="powerupBanner">WIDE RACKET!</div>
+
+  <div class="overlay" id="startOverlay">
+    <h1>🎾 COURT BREAKER</h1>
+    <p>
+      マウス／指でラケットを左右に動かしてボールを打ち返し、上に並んだブロックをすべて割ろう。
+      黄色いブロックを崩すとパワーアップが出現することがあります。
+    </p>
+    <button class="btn" id="startBtn">PLAY</button>
+  </div>
+
+  <div class="overlay hidden" id="endOverlay">
+    <h1 id="endTitle">GAME OVER</h1>
+    <p id="endDesc">スコア: 0</p>
+    <button class="btn" id="retryBtn">RETRY</button>
+  </div>
+
+  <div class="hint" id="hint">マウス移動 / タッチ操作で左右に動かそう</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js"
+  }
+}
+</script>
+<script type="module">
+/*
+ * ===================================================================
+ *  コート・ブレイカー — 3Dブロック崩し（学習用オリジナル再現デモ）
+ * ===================================================================
+ * 参照元: Lacoste "Ace Breaker" (Merci-Michel制作, Awwwards Site of the
+ * Day 2026/08/03受賞)。テニスをテーマにしたブラウザ内ミニゲームで、
+ * 「操作は1つだけ・すぐ遊べる・派手な演出」というWebGLゲーム表現の
+ * 定番パターンを、自分の理解に基づきThree.jsだけでゼロから実装した
+ * ものです。対象サイトのソースコードは一切参照・複製していません。
+ *
+ * このファイル単体で動作します。使い方はREADME.mdを参照してください。
+ * ===================================================================
+ */
+import * as THREE from "three";
+
+/* -------------------------------------------------------------
+ * 1. 定数・ゲーム設定
+ *    ここを書き換えるだけでコートのサイズやブロックの数を調整できる
+ * ----------------------------------------------------------- */
+const COURT = { width: 12, depth: 18 };
+const PADDLE = { width: 2.4, depth: 0.5, height: 0.4, z: 7.6, speed: 26 };
+const BALL_RADIUS = 0.28;
+const BRICK = { cols: 8, rows: 5, width: 1.32, depth: 0.6, height: 0.5, gapX: 0.14, gapZ: 0.22, startZ: -6.6 };
+const COLORS = {
+  court: 0x0b3d20,
+  line: 0xf5f5f0,
+  paddle: 0xf5f5f0,
+  ball: 0xd7f24b,
+  brickA: 0xd7f24b, // 通常ブロック(黄緑)
+  brickB: 0xffd400, // パワーアップ内蔵ブロック(黄)
+};
+
+/* -------------------------------------------------------------
+ * 2. Three.js の基本セットアップ
+ *    シーン・カメラ・レンダラーをまとめる小さなヘルパー
+ * ----------------------------------------------------------- */
+function createRenderer(canvas) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  return renderer;
+}
+
+function createScene() {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x04160c);
+  scene.fog = new THREE.Fog(0x04160c, 18, 34);
+
+  const hemi = new THREE.HemisphereLight(0xdfffe0, 0x08130a, 0.9);
+  scene.add(hemi);
+
+  const key = new THREE.DirectionalLight(0xffffff, 1.4);
+  key.position.set(4, 12, 6);
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.camera.left = -12;
+  key.shadow.camera.right = 12;
+  key.shadow.camera.top = 12;
+  key.shadow.camera.bottom = -12;
+  scene.add(key);
+
+  return scene;
+}
+
+// 見下ろし気味の「ゲームらしい」固定カメラ。演出のためのシェイクを
+// 別レイヤーで加算できるよう、基準位置(basePosition)を別に保持する。
+function createCamera() {
+  const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+  camera.basePosition = new THREE.Vector3(0, 13.5, 11.5);
+  camera.position.copy(camera.basePosition);
+  camera.lookAt(0, 0, -1.5);
+  return camera;
+}
+
+/* -------------------------------------------------------------
+ * 3. コート(床)・壁ライン
+ * ----------------------------------------------------------- */
+function createCourt(scene) {
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(COURT.width, COURT.depth),
+    new THREE.MeshStandardMaterial({ color: COLORS.court, roughness: 0.9 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // テニスコート風のセンターライン・サイドラインを細長い板で表現
+  const lineMat = new THREE.MeshBasicMaterial({ color: COLORS.line });
+  const addLine = (w, d, x, z) => {
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(w, d), lineMat);
+    line.rotation.x = -Math.PI / 2;
+    line.position.set(x, 0.01, z);
+    scene.add(line);
+  };
+  addLine(COURT.width - 0.6, 0.12, 0, -COURT.depth / 2 + 0.3);
+  addLine(0.12, COURT.depth - 0.6, -COURT.width / 2 + 0.3, 0);
+  addLine(0.12, COURT.depth - 0.6, COURT.width / 2 - 0.3, 0);
+  addLine(COURT.width - 0.6, 0.12, 0, PADDLE.z + 1.4);
+
+  // 左右の壁(見た目だけの半透明パネル。当たり判定は数値で別管理)
+  const wallGeo = new THREE.BoxGeometry(0.2, 1.2, COURT.depth);
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.08 });
+  [-1, 1].forEach((side) => {
+    const wall = new THREE.Mesh(wallGeo, wallMat);
+    wall.position.set(side * (COURT.width / 2), 0.6, 0);
+    scene.add(wall);
+  });
+}
+
+/* -------------------------------------------------------------
+ * 4. ラケット(パドル)・ボール
+ * ----------------------------------------------------------- */
+function createPaddle(scene) {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(PADDLE.width, PADDLE.height, PADDLE.depth),
+    new THREE.MeshStandardMaterial({ color: COLORS.paddle, roughness: 0.4, metalness: 0.1 })
+  );
+  mesh.position.set(0, PADDLE.height / 2, PADDLE.z);
+  mesh.castShadow = true;
+  scene.add(mesh);
+  return { mesh, x: 0, targetX: 0, width: PADDLE.width, wideUntil: 0 };
+}
+
+function createBall(scene) {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_RADIUS, 20, 20),
+    new THREE.MeshStandardMaterial({ color: COLORS.ball, emissive: 0x2a3d08, roughness: 0.3 })
+  );
+  mesh.castShadow = true;
+  scene.add(mesh);
+
+  // 残像(トレイル)用に、少し前の座標を薄いスプライトとして複数個
+  // 使い回す。ゲームらしいスピード感を出すための簡易テクニック。
+  const trail = [];
+  for (let i = 0; i < 8; i++) {
+    const t = new THREE.Mesh(
+      new THREE.SphereGeometry(BALL_RADIUS * (1 - i / 10), 8, 8),
+      new THREE.MeshBasicMaterial({ color: COLORS.ball, transparent: true, opacity: 0.25 * (1 - i / 8) })
+    );
+    scene.add(t);
+    trail.push(t);
+  }
+
+  return {
+    mesh,
+    trail,
+    trailHistory: [],
+    pos: new THREE.Vector3(0, BALL_RADIUS, 0),
+    vel: new THREE.Vector3(3.2, 0, -6.4),
+  };
+}
+
+/* -------------------------------------------------------------
+ * 5. ブロック(ブリック)フィールド
+ *    行ごとに色を変え、一部を「パワーアップ内蔵ブロック」にする
+ * ----------------------------------------------------------- */
+function createBrickField(scene) {
+  const bricks = [];
+  const totalWidth = BRICK.cols * BRICK.width + (BRICK.cols - 1) * BRICK.gapX;
+  const startX = -totalWidth / 2 + BRICK.width / 2;
+
+  for (let row = 0; row < BRICK.rows; row++) {
+    for (let col = 0; col < BRICK.cols; col++) {
+      const isPower = Math.random() < 0.12;
+      const color = isPower ? COLORS.brickB : COLORS.brickA;
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(BRICK.width, BRICK.height, BRICK.depth),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.5 })
+      );
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      const x = startX + col * (BRICK.width + BRICK.gapX);
+      const z = BRICK.startZ + row * (BRICK.depth + BRICK.gapZ);
+      mesh.position.set(x, BRICK.height / 2, z);
+      mesh.userData.baseY = BRICK.height / 2;
+      scene.add(mesh);
+      bricks.push({
+        mesh,
+        x, z,
+        halfW: BRICK.width / 2,
+        halfD: BRICK.depth / 2,
+        alive: true,
+        isPower,
+        popT: 0, // 破壊時のポップアニメーション用タイマー
+      });
+    }
+  }
+  return bricks;
+}
+
+/* -------------------------------------------------------------
+ * 6. パーティクル演出(ブロック破壊時の破片エフェクト)
+ *    Three.jsの小さなBoxを複数個、速度と重力を与えて飛ばすだけの
+ *    軽量な自作パーティクルシステム。
+ * ----------------------------------------------------------- */
+function createParticlePool(scene, size = 60) {
+  const pool = [];
+  const geo = new THREE.BoxGeometry(0.09, 0.09, 0.09);
+  for (let i = 0; i < size; i++) {
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    mesh.visible = false;
+    scene.add(mesh);
+    pool.push({ mesh, vel: new THREE.Vector3(), life: 0, maxLife: 0 });
+  }
+  let cursor = 0;
+
+  function burst(position, color, count = 14) {
+    for (let i = 0; i < count; i++) {
+      const p = pool[cursor];
+      cursor = (cursor + 1) % pool.length;
+      p.mesh.position.copy(position);
+      p.mesh.material.color.setHex(color);
+      p.mesh.visible = true;
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 2 + Math.random() * 3.5;
+      p.vel.set(Math.cos(angle) * speed, 3 + Math.random() * 3, Math.sin(angle) * speed);
+      p.maxLife = 0.5 + Math.random() * 0.3;
+      p.life = p.maxLife;
+    }
+  }
+
+  function update(dt) {
+    for (const p of pool) {
+      if (p.life <= 0) continue;
+      p.life -= dt;
+      p.vel.y -= 9.8 * dt; // 簡易重力
+      p.mesh.position.addScaledVector(p.vel, dt);
+      const t = Math.max(p.life / p.maxLife, 0);
+      p.mesh.scale.setScalar(t);
+      if (p.life <= 0) p.mesh.visible = false;
+    }
+  }
+
+  return { burst, update };
+}
+
+/* -------------------------------------------------------------
+ * 7. カメラシェイク(ヒット時の画面揺れ)
+ *    「基準位置 + 減衰するランダムオフセット」を毎フレーム加算する
+ *    だけのシンプルな実装。強いインパクト演出に効果的。
+ * ----------------------------------------------------------- */
+function createShake(camera) {
+  let trauma = 0;
+  return {
+    trigger(amount) { trauma = Math.min(1, trauma + amount); },
+    update(dt) {
+      trauma = Math.max(0, trauma - dt * 2.2);
+      const shake = trauma * trauma;
+      camera.position.set(
+        camera.basePosition.x + (Math.random() - 0.5) * shake * 0.6,
+        camera.basePosition.y + (Math.random() - 0.5) * shake * 0.4,
+        camera.basePosition.z + (Math.random() - 0.5) * shake * 0.6
+      );
+    },
+  };
+}
+
+/* -------------------------------------------------------------
+ * 8. ゲーム全体の状態・ロジック
+ * ----------------------------------------------------------- */
+class Game {
+  constructor(canvas) {
+    this.renderer = createRenderer(canvas);
+    this.scene = createScene();
+    this.camera = createCamera();
+    createCourt(this.scene);
+    this.paddle = createPaddle(this.scene);
+    this.ball = createBall(this.scene);
+    this.bricks = createBrickField(this.scene);
+    this.particles = createParticlePool(this.scene);
+    this.shake = createShake(this.camera);
+
+    this.score = 0;
+    this.combo = 1;
+    this.lives = 3;
+    this.running = false;
+    this.comboTimeout = null;
+
+    this.resize();
+    window.addEventListener("resize", () => this.resize());
+    this.bindInput(canvas);
+  }
+
+  resize() {
+    const w = innerWidth, h = innerHeight;
+    this.renderer.setSize(w, h);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+  }
+
+  // マウス移動 / タッチ移動 の水平位置を -halfWidth〜+halfWidth に
+  // マッピングしてラケットの目標座標にする。ポインター操作の吸着感を
+  // 出すため、実際の移動は毎フレームのlerpで滑らかにしている。
+  bindInput(canvas) {
+    const halfW = COURT.width / 2 - PADDLE.width / 2;
+    const setTarget = (clientX) => {
+      const nx = (clientX / innerWidth) * 2 - 1; // -1〜1に正規化
+      this.paddle.targetX = THREE.MathUtils.clamp(nx * halfW * 1.15, -halfW, halfW);
+    };
+    canvas.addEventListener("pointermove", (e) => setTarget(e.clientX));
+    canvas.addEventListener(
+      "touchmove",
+      (e) => { setTarget(e.touches[0].clientX); e.preventDefault(); },
+      { passive: false }
+    );
+  }
+
+  reset() {
+    this.score = 0;
+    this.combo = 1;
+    this.lives = 3;
+    this.bricks.forEach((b) => {
+      b.alive = true;
+      b.mesh.visible = true;
+      b.mesh.scale.setScalar(1);
+    });
+    this.paddle.width = PADDLE.width;
+    this.paddle.wideUntil = 0;
+    this.resetBall();
+    this.updateHud();
+  }
+
+  resetBall() {
+    this.ball.pos.set(0, BALL_RADIUS, 0);
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    this.ball.vel.set(dir * 3.2, 0, -6.4);
+  }
+
+  addScore(points) {
+    this.score += points * this.combo;
+    document.getElementById("scoreChip").textContent = `SCORE ${this.score}`;
+    this.combo = Math.min(this.combo + 1, 9);
+    const comboChip = document.getElementById("comboChip");
+    comboChip.textContent = `COMBO x${this.combo}`;
+    comboChip.classList.add("show");
+    clearTimeout(this.comboTimeout);
+    this.comboTimeout = setTimeout(() => comboChip.classList.remove("show"), 1200);
+  }
+
+  updateHud() {
+    document.getElementById("scoreChip").textContent = `SCORE ${this.score}`;
+    const livesEl = document.getElementById("livesChip");
+    livesEl.innerHTML = "";
+    for (let i = 0; i < 3; i++) {
+      const s = document.createElement("span");
+      s.textContent = "🎾";
+      s.className = i < this.lives ? "alive" : "";
+      livesEl.appendChild(s);
+    }
+  }
+
+  showPowerup(label) {
+    const el = document.getElementById("powerupBanner");
+    el.textContent = label;
+    el.classList.add("show");
+    clearTimeout(this._powerT);
+    this._powerT = setTimeout(() => el.classList.remove("show"), 1400);
+  }
+
+  applyPowerup() {
+    this.paddle.width = PADDLE.width * 1.6;
+    this.paddle.wideUntil = performance.now() + 8000;
+    this.paddle.mesh.scale.x = 1.6;
+    this.showPowerup("WIDE RACKET!");
+  }
+
+  /* ------------- 毎フレームの更新処理 ------------- */
+  update(dt) {
+    const halfW = COURT.width / 2 - PADDLE.width / 2;
+
+    // パワーアップの時間切れチェック
+    if (this.paddle.wideUntil && performance.now() > this.paddle.wideUntil) {
+      this.paddle.width = PADDLE.width;
+      this.paddle.mesh.scale.x = 1;
+      this.paddle.wideUntil = 0;
+    }
+
+    // ラケットを目標位置へ滑らかに追従(lerp)させる
+    this.paddle.x = THREE.MathUtils.lerp(this.paddle.x, this.paddle.targetX, 1 - Math.pow(0.001, dt));
+    this.paddle.mesh.position.x = this.paddle.x;
+
+    // --- ボールの移動 ---
+    const b = this.ball;
+    b.pos.addScaledVector(b.vel, dt);
+
+    // 左右の壁で反射
+    const wallX = COURT.width / 2 - BALL_RADIUS;
+    if (b.pos.x < -wallX) { b.pos.x = -wallX; b.vel.x *= -1; }
+    if (b.pos.x > wallX) { b.pos.x = wallX; b.vel.x *= -1; }
+
+    // 奥の壁で反射
+    const wallZFar = BRICK.startZ - 1.4;
+    if (b.pos.z < wallZFar) { b.pos.z = wallZFar; b.vel.z *= -1; }
+
+    // ラケットとの当たり判定。当たった位置に応じて反射角を変える
+    // (中心から外れるほど横方向の速度が強くなる = Breakout系ゲームの定番)
+    const paddleHalfW = this.paddle.width / 2;
+    if (
+      b.vel.z > 0 &&
+      b.pos.z + BALL_RADIUS >= PADDLE.z - PADDLE.depth / 2 &&
+      b.pos.z <= PADDLE.z + PADDLE.depth / 2 &&
+      Math.abs(b.pos.x - this.paddle.x) <= paddleHalfW + BALL_RADIUS
+    ) {
+      const offset = (b.pos.x - this.paddle.x) / paddleHalfW; // -1〜1
+      const speed = b.vel.length();
+      const angle = offset * (Math.PI / 3); // 最大60度まで振れる
+      b.vel.set(Math.sin(angle) * speed, 0, -Math.cos(angle) * speed);
+      b.pos.z = PADDLE.z - PADDLE.depth / 2 - BALL_RADIUS;
+      this.shake.trigger(0.25);
+    }
+
+    // ラケットより手前に落ちたらライフを1つ失う
+    if (b.pos.z > PADDLE.z + 2.5) {
+      this.lives -= 1;
+      this.combo = 1;
+      this.updateHud();
+      if (this.lives <= 0) {
+        this.endGame(false);
+        return;
+      }
+      this.resetBall();
+    }
+
+    // --- ブロックとの当たり判定(簡易AABB) ---
+    for (const brick of this.bricks) {
+      if (!brick.alive) continue;
+      const withinX = Math.abs(b.pos.x - brick.x) <= brick.halfW + BALL_RADIUS;
+      const withinZ = Math.abs(b.pos.z - brick.z) <= brick.halfD + BALL_RADIUS;
+      if (withinX && withinZ) {
+        brick.alive = false;
+        brick.mesh.visible = false;
+        this.particles.burst(brick.mesh.position, brick.mesh.material.color.getHex());
+        this.shake.trigger(0.35);
+        this.addScore(10);
+        if (brick.isPower) this.applyPowerup();
+
+        // 貫通し過ぎないよう、ブロックの中心とボールの相対位置から
+        // 反射方向をX/Zどちらで反転するか大まかに決める
+        const dx = Math.abs(b.pos.x - brick.x) - brick.halfW;
+        const dz = Math.abs(b.pos.z - brick.z) - brick.halfD;
+        if (dx > dz) b.vel.x *= -1; else b.vel.z *= -1;
+        break;
+      }
+    }
+
+    // ボール・トレイル・パーティクルの見た目を反映
+    b.mesh.position.copy(b.pos);
+    b.trailHistory.unshift(b.pos.clone());
+    if (b.trailHistory.length > b.trail.length) b.trailHistory.pop();
+    b.trail.forEach((t, i) => {
+      const p = b.trailHistory[i];
+      if (p) { t.visible = true; t.position.copy(p); } else { t.visible = false; }
+    });
+
+    this.particles.update(dt);
+    this.shake.update(dt);
+
+    if (this.bricks.every((brick) => !brick.alive)) this.endGame(true);
+  }
+
+  endGame(win) {
+    this.running = false;
+    document.getElementById("endTitle").textContent = win ? "COURT CLEAR!" : "GAME OVER";
+    document.getElementById("endDesc").textContent = `スコア: ${this.score}`;
+    document.getElementById("endOverlay").classList.remove("hidden");
+  }
+
+  render() {
+    this.renderer.render(this.scene, this.camera);
+  }
+}
+
+/* -------------------------------------------------------------
+ * 9. 起動処理(UIイベントとメインループの接続)
+ * ----------------------------------------------------------- */
+const canvas = document.createElement("canvas");
+document.getElementById("app").prepend(canvas);
+const game = new Game(canvas);
+
+let lastT = performance.now();
+function loop(now) {
+  const dt = Math.min((now - lastT) / 1000, 1 / 30);
+  lastT = now;
+  if (game.running) game.update(dt);
+  else game.shake.update(dt);
+  game.render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function startGame() {
+  document.getElementById("startOverlay").classList.add("hidden");
+  document.getElementById("endOverlay").classList.add("hidden");
+  game.reset();
+  game.running = true;
+}
+
+document.getElementById("startBtn").addEventListener("click", startGame);
+document.getElementById("retryBtn").addEventListener("click", startGame);
+</script>
+</body>
+</html>
