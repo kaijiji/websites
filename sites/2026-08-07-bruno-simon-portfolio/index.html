@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>3Dドライビング・ポートフォリオ 再現デモ</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚗</text></svg>" />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #bfe3ff;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  }
+  canvas { display: block; touch-action: none; }
+
+  #hud {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #hud h1 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: #1c2b3a;
+    background: rgba(255,255,255,.75);
+    padding: 8px 14px;
+    border-radius: 999px;
+    backdrop-filter: blur(6px);
+  }
+  #hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #1c2b3a;
+    background: rgba(255,255,255,.65);
+    padding: 6px 12px;
+    border-radius: 999px;
+    max-width: 260px;
+  }
+
+  #panel {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translate(-50%, 20px);
+    background: rgba(20, 24, 32, 0.88);
+    color: #fff;
+    padding: 14px 22px;
+    border-radius: 14px;
+    max-width: min(520px, 86vw);
+    text-align: center;
+    font-size: 14px;
+    line-height: 1.5;
+    opacity: 0;
+    transition: opacity .25s ease, transform .25s ease;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #panel.visible { opacity: 1; transform: translate(-50%, 0); }
+  #panel b { color: #7fd8ff; }
+
+  /* --- スマホ用の簡易タッチコントロール --- */
+  #touch {
+    position: fixed;
+    bottom: 18px;
+    left: 18px;
+    right: 18px;
+    display: none;
+    justify-content: space-between;
+    z-index: 10;
+  }
+  #touch.show { display: flex; }
+  .tbtn {
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.35);
+    border: 2px solid rgba(255,255,255,.6);
+    color: #fff;
+    font-size: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+  }
+  .tgroup { display: flex; gap: 10px; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <h1>🚗 Drive & Explore — 再現デモ</h1>
+  <div id="hint">矢印キー / WASD で運転、パネルに近づくと情報が表示されます</div>
+</div>
+
+<div id="panel"></div>
+
+<div id="touch">
+  <div class="tgroup">
+    <div class="tbtn" id="btnLeft">◀</div>
+    <div class="tbtn" id="btnRight">▶</div>
+  </div>
+  <div class="tgroup">
+    <div class="tbtn" id="btnBrake">■</div>
+    <div class="tbtn" id="btnForward">▲</div>
+  </div>
+</div>
+
+<!--
+  ============================================================
+  学習用オリジナル再現デモ:「車を運転して周れる3Dポートフォリオ」
+  ============================================================
+  このファイルは Bruno Simon 氏のポートフォリオサイト
+  (https://bruno-simon.com) の実際のソースコードではありません。
+  観察した「表現の仕組み」(Three.js による3D描画 + 物理演算ライブラリに
+  よる車の運転操作 + 近づくとパネルが開く演出)を理解した上で、
+  ゼロから書いたオリジナルのコードです。
+
+  詳しい解説は同じフォルダの README.md を参照してください。
+  ============================================================
+-->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js",
+    "cannon-es": "./vendor/cannon-es.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import * as CANNON from "cannon-es";
+
+/* ------------------------------------------------------------------
+ * 1. Three.js: シーン / カメラ / レンダラーの基本セットアップ
+ * ------------------------------------------------------------------ */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xbfe3ff);
+scene.fog = new THREE.Fog(0xbfe3ff, 40, 140);
+
+const camera = new THREE.PerspectiveCamera(
+  55,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  500
+);
+camera.position.set(0, 6, -10);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ライト
+const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 0.9);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(30, 40, -10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -60;
+sun.shadow.camera.right = 60;
+sun.shadow.camera.top = 60;
+sun.shadow.camera.bottom = -60;
+scene.add(sun);
+
+/* ------------------------------------------------------------------
+ * 2. Cannon-es: 物理ワールドのセットアップ
+ *    ※このデモの肝は「見た目(Three.js)」と「物理演算(cannon-es)」を
+ *      毎フレーム同期させることで、車が地面やスロープに沿って
+ *      自然に走っているように見せている点です。
+ * ------------------------------------------------------------------ */
+const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.defaultContactMaterial.friction = 0.3;
+
+const groundMaterial = new CANNON.Material("ground");
+const wheelMaterial = new CANNON.Material("wheel");
+const wheelGroundContact = new CANNON.ContactMaterial(groundMaterial, wheelMaterial, {
+  friction: 0.35,
+  restitution: 0,
+  contactEquationStiffness: 1000,
+});
+world.addContactMaterial(wheelGroundContact);
+
+/* --- 地面（見た目 + 物理の両方を用意） --- */
+function addGround() {
+  const groundGeo = new THREE.PlaneGeometry(1000, 1000);
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x8fce7a });
+  const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+  groundMesh.rotation.x = -Math.PI / 2;
+  groundMesh.receiveShadow = true;
+  scene.add(groundMesh);
+
+  const groundBody = new CANNON.Body({ mass: 0, material: groundMaterial });
+  groundBody.addShape(new CANNON.Plane());
+  groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+  world.addBody(groundBody);
+}
+addGround();
+
+/* --- 見た目のメッシュと物理ボディを1セットで管理する小さなヘルパー ---
+ * Three.js の Mesh と cannon-es の Body をペアで持ち、毎フレーム
+ * body の位置・姿勢を mesh にコピーするだけのシンプルな仕組みです。
+ * 自分のプロジェクトで物体を追加したいときはこの関数を呼ぶだけで OK。
+ */
+const syncedBodies = [];
+function addBox({ size, position, color = 0xffffff, mass = 0, rotationY = 0, rotationX = 0 }) {
+  const geo = new THREE.BoxGeometry(...size);
+  const mat = new THREE.MeshStandardMaterial({ color });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.position.set(...position);
+  mesh.rotation.set(rotationX, rotationY, 0);
+  scene.add(mesh);
+
+  const shape = new CANNON.Box(new CANNON.Vec3(size[0] / 2, size[1] / 2, size[2] / 2));
+  const body = new CANNON.Body({ mass, material: groundMaterial });
+  body.addShape(shape);
+  body.position.set(...position);
+  body.quaternion.setFromEuler(rotationX, rotationY, 0);
+  world.addBody(body);
+
+  if (mass > 0) syncedBodies.push({ mesh, body });
+  return { mesh, body };
+}
+
+/* --- ちょっとした起伏・ランプ・障害物を配置してコースらしくする ---
+ * 注意: 物理ボディ同士が「浮いた壁」のように衝突すると、車が高速で
+ * 突っ込んだ瞬間に弾き飛ばされてしまいます。ランプは必ず地面と
+ * 連続するように角度と位置を調整してください。
+ */
+addBox({ size: [10, 1, 10], position: [18, 0.5, 0], color: 0xf2c185 }); // 低い台（乗り上げられる段差）
+addBox({ size: [6, 0.4, 5], position: [18, 0.55, -8], color: 0xf2c185, rotationX: -0.35 }); // 台へ続くランプ（地面と接続）
+addBox({ size: [3, 1.2, 3], position: [-14, 0.6, 10], color: 0xe07a5f });
+addBox({ size: [3, 1.2, 3], position: [-20, 0.6, 4], color: 0xe07a5f });
+addBox({ size: [1.2, 1.2, 1.2], position: [4, 0.6, 12], color: 0x81b29a, mass: 15 }); // 押せる箱
+addBox({ size: [1.2, 1.2, 1.2], position: [6, 0.6, 12], color: 0x81b29a, mass: 15 });
+
+/* ------------------------------------------------------------------
+ * 3. 「作品を紹介する看板」= プロジェクトごとの立て看板
+ *    近づくと画面下にパネルが開く、という Bruno Simon 氏のサイトの
+ *    体験を単純化して再現しています（Canvas でテキストを描いて
+ *    テクスチャとして貼り付け）。
+ * ------------------------------------------------------------------ */
+function makeLabelTexture(text) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#1c2b3a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 48px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  return new THREE.CanvasTexture(canvas);
+}
+
+const projects = [
+  { title: "Project 01", body: "スクロール連動アニメーションのデモ", position: [-10, 3, -14] },
+  { title: "Project 02", body: "WebGL パーティクル表現のデモ", position: [16, 3, 16] },
+  { title: "Project 03", body: "カスタムカーソルの実装例", position: [-22, 3, -8] },
+];
+
+const signposts = projects.map((p) => {
+  const texture = makeLabelTexture(p.title);
+  const mat = new THREE.SpriteMaterial({ map: texture });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(6, 3, 1);
+  sprite.position.set(...p.position);
+  scene.add(sprite);
+
+  // 支柱
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.1, 0.1, p.position[1], 8),
+    new THREE.MeshStandardMaterial({ color: 0x333333 })
+  );
+  pole.position.set(p.position[0], p.position[1] / 2, p.position[2]);
+  pole.castShadow = true;
+  scene.add(pole);
+
+  return { ...p, sprite };
+});
+
+/* ------------------------------------------------------------------
+ * 4. 車体（シャシー + 4輪）を RaycastVehicle で組み立てる
+ *    RaycastVehicle は cannon-es が提供する「車の運転」専用の仕組みで、
+ *    各ホイールから地面へレイを飛ばしてサスペンションを計算します。
+ * ------------------------------------------------------------------ */
+const chassisSize = { x: 1.8, y: 0.6, z: 3.4 };
+const chassisShape = new CANNON.Box(
+  new CANNON.Vec3(chassisSize.x / 2, chassisSize.y / 2, chassisSize.z / 2)
+);
+const chassisBody = new CANNON.Body({ mass: 150 });
+chassisBody.addShape(chassisShape);
+chassisBody.position.set(0, 4, -20);
+
+const vehicle = new CANNON.RaycastVehicle({
+  chassisBody,
+  indexRightAxis: 0,
+  indexUpAxis: 1,
+  indexForwardAxis: 2,
+});
+
+const wheelOptions = {
+  radius: 0.4,
+  directionLocal: new CANNON.Vec3(0, -1, 0),
+  suspensionStiffness: 45,
+  suspensionRestLength: 0.4,
+  frictionSlip: 2.2,
+  dampingRelaxation: 2.3,
+  dampingCompression: 4.4,
+  maxSuspensionForce: 100000,
+  rollInfluence: 0.02,
+  axleLocal: new CANNON.Vec3(1, 0, 0),
+  chassisConnectionPointLocal: new CANNON.Vec3(),
+  maxSuspensionTravel: 0.3,
+  customSlidingRotationalSpeed: -30,
+  useCustomSlidingRotationalSpeed: true,
+};
+
+const wheelAnchors = [
+  [0.85, 0, 1.15],   // front-right
+  [-0.85, 0, 1.15],  // front-left
+  [0.85, 0, -1.15],  // rear-right
+  [-0.85, 0, -1.15], // rear-left
+];
+wheelAnchors.forEach((anchor) => {
+  wheelOptions.chassisConnectionPointLocal.set(...anchor);
+  vehicle.addWheel({ ...wheelOptions });
+});
+vehicle.addToWorld(world);
+
+// 見た目: シャシー
+const chassisMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(chassisSize.x, chassisSize.y, chassisSize.z),
+  new THREE.MeshStandardMaterial({ color: 0xff5d5d })
+);
+chassisMesh.castShadow = true;
+scene.add(chassisMesh);
+
+// 見た目: 4つのホイール
+const wheelMeshes = vehicle.wheelInfos.map(() => {
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.4, 0.4, 0.3, 20),
+    new THREE.MeshStandardMaterial({ color: 0x222222 })
+  );
+  mesh.rotation.x = Math.PI / 2; // シリンダーを横倒しにしてタイヤっぽくする
+  mesh.castShadow = true;
+  scene.add(mesh);
+  return mesh;
+});
+
+/* ------------------------------------------------------------------
+ * 5. 操作: キーボード & タッチボタン
+ * ------------------------------------------------------------------ */
+const MAX_FORCE = 900;
+const MAX_STEER = 0.55;
+const BRAKE_FORCE = 24;
+
+const input = { forward: false, backward: false, left: false, right: false, brake: false };
+
+function updateVehicleFromInput() {
+  const engineForce = input.forward ? -MAX_FORCE : input.backward ? MAX_FORCE : 0;
+  // 後輪駆動 (index 2, 3)
+  vehicle.applyEngineForce(engineForce, 2);
+  vehicle.applyEngineForce(engineForce, 3);
+
+  const steer = input.left ? MAX_STEER : input.right ? -MAX_STEER : 0;
+  vehicle.setSteeringValue(steer, 0);
+  vehicle.setSteeringValue(steer, 1);
+
+  const brake = input.brake ? BRAKE_FORCE : 0;
+  [0, 1, 2, 3].forEach((i) => vehicle.setBrake(brake, i));
+}
+
+const keyMap = {
+  ArrowUp: "forward", KeyW: "forward",
+  ArrowDown: "backward", KeyS: "backward",
+  ArrowLeft: "left", KeyA: "left",
+  ArrowRight: "right", KeyD: "right",
+  Space: "brake",
+};
+window.addEventListener("keydown", (e) => {
+  if (keyMap[e.code]) { input[keyMap[e.code]] = true; e.preventDefault(); }
+});
+window.addEventListener("keyup", (e) => {
+  if (keyMap[e.code]) { input[keyMap[e.code]] = false; e.preventDefault(); }
+});
+
+// タッチ操作 (スマホ表示時のみボタンを出す)
+if ("ontouchstart" in window) {
+  document.getElementById("touch").classList.add("show");
+  const bind = (id, key) => {
+    const el = document.getElementById(id);
+    const on = (v) => (e) => { input[key] = v; e.preventDefault(); };
+    el.addEventListener("touchstart", on(true));
+    el.addEventListener("touchend", on(false));
+  };
+  bind("btnForward", "forward");
+  bind("btnBrake", "brake");
+  bind("btnLeft", "left");
+  bind("btnRight", "right");
+}
+
+/* ------------------------------------------------------------------
+ * 6. 看板パネル: 車が近づいたら情報を表示する
+ * ------------------------------------------------------------------ */
+const panelEl = document.getElementById("panel");
+let activeProject = null;
+function updateProjectPanel() {
+  const carPos = chassisBody.position;
+  let nearest = null;
+  let nearestDist = 6; // この距離より近づいたら表示
+
+  for (const p of signposts) {
+    const dx = carPos.x - p.position[0];
+    const dz = carPos.z - p.position[2];
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < nearestDist) { nearest = p; nearestDist = dist; }
+  }
+
+  if (nearest !== activeProject) {
+    activeProject = nearest;
+    if (nearest) {
+      panelEl.innerHTML = `<b>${nearest.title}</b><br>${nearest.body}`;
+      panelEl.classList.add("visible");
+    } else {
+      panelEl.classList.remove("visible");
+    }
+  }
+}
+
+/* ------------------------------------------------------------------
+ * 7. カメラ: 車の後ろから追従する三人称視点
+ * ------------------------------------------------------------------ */
+const cameraOffset = new THREE.Vector3(0, 4.2, -8);
+const cameraTarget = new THREE.Vector3();
+const desiredCamPos = new THREE.Vector3();
+
+function updateCamera() {
+  const carQuat = chassisMesh.quaternion;
+  desiredCamPos.copy(cameraOffset).applyQuaternion(carQuat).add(chassisMesh.position);
+  camera.position.lerp(desiredCamPos, 0.06);
+
+  cameraTarget.lerp(chassisMesh.position, 0.15);
+  camera.lookAt(cameraTarget.x, cameraTarget.y + 1, cameraTarget.z);
+}
+
+/* ------------------------------------------------------------------
+ * 8. メインループ: 物理を進めて、見た目に反映する
+ * ------------------------------------------------------------------ */
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = Math.min(clock.getDelta(), 0.1);
+
+  updateVehicleFromInput();
+  world.step(1 / 60, delta, 5);
+
+  // --- 簡易セーフティ: 障害物に高速で突っ込んだ際に物理演算が
+  // 破綻して吹き飛ぶ(いわゆる "physics explosion")のを防ぐため、
+  // 速度に上限をかけています。自作ゲームでも荒ぶる物理を
+  // 抑えるのに便利なテクニックです。
+  const MAX_LINEAR_SPEED = 26;
+  const MAX_ANGULAR_SPEED = 8;
+  if (chassisBody.velocity.length() > MAX_LINEAR_SPEED) {
+    chassisBody.velocity.scale(MAX_LINEAR_SPEED / chassisBody.velocity.length(), chassisBody.velocity);
+  }
+  if (chassisBody.angularVelocity.length() > MAX_ANGULAR_SPEED) {
+    chassisBody.angularVelocity.scale(MAX_ANGULAR_SPEED / chassisBody.angularVelocity.length(), chassisBody.angularVelocity);
+  }
+
+  // コース外に落ちた場合はスタート地点に戻す
+  if (chassisBody.position.y < -10) {
+    chassisBody.position.set(0, 4, -20);
+    chassisBody.velocity.set(0, 0, 0);
+    chassisBody.angularVelocity.set(0, 0, 0);
+    chassisBody.quaternion.set(0, 0, 0, 1);
+  }
+
+  // シャシーの位置・姿勢を反映
+  chassisMesh.position.copy(chassisBody.position);
+  chassisMesh.quaternion.copy(chassisBody.quaternion);
+
+  // ホイールの位置・姿勢を反映
+  vehicle.wheelInfos.forEach((wheel, i) => {
+    vehicle.updateWheelTransform(i);
+    const t = wheel.worldTransform;
+    wheelMeshes[i].position.copy(t.position);
+    wheelMeshes[i].quaternion.copy(t.quaternion);
+  });
+
+  // 物理演算する箱などをメッシュに同期
+  syncedBodies.forEach(({ mesh, body }) => {
+    mesh.position.copy(body.position);
+    mesh.quaternion.copy(body.quaternion);
+  });
+
+  updateProjectPanel();
+  updateCamera();
+
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
