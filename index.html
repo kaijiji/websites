@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Webデザイン再現ギャラリー</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎨</text></svg>" />
+<style>
+  :root {
+    --bg: #0f1116;
+    --bg-elevated: #171a22;
+    --card: #1c2029;
+    --card-hover: #232836;
+    --border: #2a2f3a;
+    --text: #e8eaf0;
+    --text-dim: #9aa1b1;
+    --accent: #7dd3fc;
+    --accent-2: #f0abfc;
+    --radius: 16px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f6fa;
+      --bg-elevated: #ffffff;
+      --card: #ffffff;
+      --card-hover: #f0f2f8;
+      --border: #e1e4ec;
+      --text: #1a1d27;
+      --text-dim: #5c6270;
+      --accent: #0284c7;
+      --accent-2: #a21caf;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", "Segoe UI", sans-serif;
+  }
+  body {
+    min-height: 100vh;
+  }
+  .hero {
+    padding: 64px 24px 40px;
+    text-align: center;
+    background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%);
+  }
+  .hero h1 {
+    margin: 0 0 12px;
+    font-size: clamp(28px, 4vw, 42px);
+    font-weight: 800;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero p {
+    margin: 0 auto;
+    max-width: 640px;
+    color: var(--text-dim);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  .hero .meta {
+    margin-top: 18px;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  .hero .meta a { color: var(--accent); text-decoration: none; }
+  .hero .meta a:hover { text-decoration: underline; }
+
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 8px 24px 80px;
+  }
+
+  #status {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 14px;
+    padding: 40px 0;
+  }
+  #status.error { color: #f87171; }
+  #status a { color: var(--accent); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    text-decoration: none;
+    color: inherit;
+    transition: transform .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    border-color: var(--accent);
+    background: var(--card-hover);
+  }
+  .card .date {
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 600;
+    letter-spacing: .03em;
+  }
+  .card h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+  .card .src {
+    font-size: 12px;
+    color: var(--text-dim);
+    word-break: break-all;
+  }
+  .card p.desc {
+    margin: 4px 0 0;
+    font-size: 13.5px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .card .open {
+    margin-top: auto;
+    padding-top: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  footer {
+    text-align: center;
+    padding: 30px 24px 50px;
+    color: var(--text-dim);
+    font-size: 12.5px;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>🎨 Webデザイン再現ギャラリー</h1>
+  <p>
+    Awwwards・CSS Design Awards・FWA などで評価された、優れたWebデザイン/独創的な表現を持つ
+    実在のサイトを分析し、学習用にオリジナル実装で再現したデモをまとめています。
+    新しい作品は自動で下に追加されていきます。
+  </p>
+  <div class="meta">
+    リポジトリ: <a href="https://github.com/kaijiji/websites" target="_blank" rel="noopener">github.com/kaijiji/websites</a>
+  </div>
+</div>
+
+<main>
+  <div id="status">読み込み中…</div>
+  <div class="grid" id="grid"></div>
+</main>
+
+<footer>
+  各デモの元となったサイトの著作権はそれぞれの制作者に帰属します。掲載コードは対象サイトのソースコードを複製したものではなく、観察した表現技法をもとに独自に実装した学習用デモです。
+</footer>
+
+<script>
+/*
+ * このページは静的HTMLですが、GitHubのContents APIを使って
+ * リポジトリ内の sites/ フォルダを実行時に読み込んでいます。
+ * そのため、新しいサイト解説フォルダを追加してpushするだけで、
+ * このページを書き換えなくても一覧に自動的に反映されます。
+ */
+const OWNER = "kaijiji";
+const REPO = "websites";
+const BRANCH = "main";
+
+const gridEl = document.getElementById("grid");
+const statusEl = document.getElementById("status");
+
+function escapeHtml(str) {
+  return str.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+// README.md の決まったフォーマット（このリポジトリのテンプレート）から
+// タイトル・参照元URL・説明文を抜き出す簡易パーサー。
+// フォーマットが多少崩れていても、拾えた分だけ表示するようにしている。
+function parseReadme(markdown, fallbackName) {
+  const titleMatch = markdown.match(/^#\s+(.+)$/m);
+  const siteNameMatch = markdown.match(/\*\*サイト名\*\*[:：]\s*(.+)/);
+  const urlMatch = markdown.match(/\*\*URL\*\*[:：]\s*(\S+)/);
+
+  const reasonHeading = markdown.match(/##\s*評価されている理由[^\n]*\n+([\s\S]*?)(\n##|\n$)/);
+  let desc = "";
+  if (reasonHeading) {
+    desc = reasonHeading[1]
+      .split("\n")
+      .map((l) => l.replace(/^[-*]\s*/, "").trim())
+      .filter(Boolean)[0] || "";
+  }
+
+  const stripMd = (s) => s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`(.+?)`/g, "$1");
+
+  return {
+    title: stripMd(titleMatch ? titleMatch[1] : fallbackName).replace(/^[^\wぁ-んァ-ヶ一-龠]+\s*/u, ""),
+    siteName: siteNameMatch ? siteNameMatch[1].trim() : null,
+    sourceUrl: urlMatch ? urlMatch[1].trim() : null,
+    desc: stripMd(desc) || "詳細は解説READMEを参照してください。",
+  };
+}
+
+function dateFromSlug(slug) {
+  const m = slug.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : "";
+}
+
+function renderCard(entry) {
+  const a = document.createElement("a");
+  a.className = "card";
+  a.href = `sites/${entry.name}/index.html`;
+
+  const date = dateFromSlug(entry.name);
+  const title = escapeHtml(entry.info.title);
+  const src = entry.info.sourceUrl ? escapeHtml(entry.info.sourceUrl) : "";
+  const desc = escapeHtml(entry.info.desc);
+
+  a.innerHTML = `
+    ${date ? `<div class="date">${date}</div>` : ""}
+    <h2>${title}</h2>
+    ${src ? `<div class="src">${src}</div>` : ""}
+    <p class="desc">${desc}</p>
+    <div class="open">デモを開く →</div>
+  `;
+  return a;
+}
+
+async function main() {
+  try {
+    const listRes = await fetch(
+      `https://api.github.com/repos/${OWNER}/${REPO}/contents/sites?ref=${BRANCH}`,
+      { headers: { Accept: "application/vnd.github+json" } }
+    );
+    if (!listRes.ok) throw new Error(`GitHub API error: ${listRes.status}`);
+    const entries = (await listRes.json()).filter((e) => e.type === "dir");
+
+    if (entries.length === 0) {
+      statusEl.textContent = "まだ作品がありません。";
+      return;
+    }
+
+    // 新しい順（フォルダ名が YYYY-MM-DD- で始まるため文字列降順=日付降順）
+    entries.sort((a, b) => b.name.localeCompare(a.name));
+
+    const results = await Promise.all(
+      entries.map(async (entry) => {
+        try {
+          const readmeRes = await fetch(
+            `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/sites/${entry.name}/README.md`
+          );
+          const markdown = readmeRes.ok ? await readmeRes.text() : "";
+          return { name: entry.name, info: parseReadme(markdown, entry.name) };
+        } catch {
+          return { name: entry.name, info: { title: entry.name, sourceUrl: null, desc: "" } };
+        }
+      })
+    );
+
+    statusEl.style.display = "none";
+    results.forEach((entry) => gridEl.appendChild(renderCard(entry)));
+  } catch (err) {
+    statusEl.className = "error";
+    statusEl.innerHTML = `
+      一覧の取得に失敗しました(${escapeHtml(err.message)})。<br>
+      <a href="https://github.com/${OWNER}/${REPO}/tree/${BRANCH}/sites" target="_blank" rel="noopener">
+        GitHub上で直接 sites/ フォルダを見る
+      </a>
+    `;
+  }
+}
+
+main();
+</script>
+</body>
+</html>
