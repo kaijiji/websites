@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EQUINOX NAV — カメラドリー式ノード探索 再現デモ</title>
+<meta name="description" content="Awwwards Site of the Day『Equinox — A WebGL Space Adventure』(Little Workshop)の一人称ノード探索・カメラドリー演出を、依存ライブラリなしのCSS 3D + Vanilla JSでオリジナル再現した学習用デモ。" />
+<style>
+  :root{
+    --bg-deep:#03040a;
+    --accent:#6fe3ff;
+    --accent-warm:#ffb37a;
+    --fg:#eef3fb;
+    --fg-dim:rgba(238,243,251,.62);
+    --panel-bg:rgba(8,12,24,.82);
+    --line:rgba(238,243,251,.14);
+    --ease:cubic-bezier(.22,.9,.24,1);
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; height:100%; background:var(--bg-deep); color:var(--fg);
+    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+    overflow:hidden; -webkit-font-smoothing:antialiased;
+  }
+
+  /* ============================================================
+     #scene = カメラのビューポート。perspective がここに掛かることで
+     子要素の translateZ が「奥行き」として遠近感を持つ。
+     ============================================================ */
+  #scene{
+    position:relative; width:100vw; height:100vh; perspective:900px;
+    background:
+      radial-gradient(ellipse at 30% 20%, rgba(60,90,160,.20), transparent 55%),
+      radial-gradient(ellipse at 75% 80%, rgba(160,80,140,.14), transparent 60%),
+      var(--bg-deep);
+  }
+
+  /* 星の層。translateZ の値が異なる3枚を preserve-3d 空間に置くだけで、
+     カメラ(#world)が動いた時に手前の層ほど速く流れる視差(パララックス)になる。 */
+  .starlayer{
+    position:absolute; inset:-50%; width:200%; height:200%;
+    background-repeat:no-repeat; pointer-events:none;
+  }
+
+  /* ============================================================
+     #world = 「カメラ」そのもの。この要素の transform を動かすことで
+     全ノードが逆向きに流れ、あたかも自分（カメラ）が宇宙空間を
+     ドリー移動しているように見える。preserve-3d が必須。
+     ============================================================ */
+  #world{
+    position:absolute; inset:0;
+    transform-style:preserve-3d;
+    will-change:transform;
+    /* #world 自体は透明な全画面プレーンだが、3D空間上ではノードより
+       手前に来ることがあり、放置すると裏側のボタンよりクリックを
+       奪ってしまう。pointer-events:none にして「透明な当たり判定」を
+       消し、実際に押せる .node-hit 側だけ auto で復活させる。 */
+    pointer-events:none;
+  }
+
+  .node{
+    position:absolute; left:50%; top:50%;
+    width:0; height:0;
+    transform-style:preserve-3d;
+  }
+  .node-hit{
+    position:absolute; left:0; top:0; transform:translate(-50%,-50%);
+    width:64px; height:64px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer; background:none; border:none; padding:0;
+    pointer-events:auto;
+  }
+  .node-ring{
+    position:absolute; inset:0; border-radius:50%;
+    border:1.5px solid var(--accent);
+    box-shadow:0 0 18px 2px rgba(111,227,255,.55);
+    animation:node-pulse 2.4s ease-out infinite;
+  }
+  .node-core{
+    width:9px; height:9px; border-radius:50%;
+    background:var(--accent);
+    box-shadow:0 0 12px 4px rgba(111,227,255,.9);
+  }
+  .node.is-visited .node-ring{ border-color:var(--accent-warm); }
+  .node.is-visited .node-core{ background:var(--accent-warm); box-shadow:0 0 12px 4px rgba(255,179,122,.9); }
+  .node.is-current .node-hit{ pointer-events:none; }
+  .node.is-current .node-ring{ opacity:0; }
+  .node-label{
+    position:absolute; top:130%; left:50%; transform:translateX(-50%);
+    font-size:.72rem; letter-spacing:.08em; color:var(--fg-dim);
+    white-space:nowrap; opacity:0; transition:opacity .3s var(--ease);
+  }
+  .node-hit:hover .node-label{ opacity:1; }
+  @keyframes node-pulse{
+    0%   { transform:scale(.65); opacity:.9; }
+    70%  { transform:scale(1.9); opacity:0; }
+    100% { transform:scale(1.9); opacity:0; }
+  }
+
+  /* ---------------- HUD ---------------- */
+  #hud{
+    position:fixed; top:0; left:0; right:0; z-index:5;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:1.4rem 1.8rem; pointer-events:none;
+  }
+  #hud *{ pointer-events:auto; }
+  #hud-title{ font-size:.78rem; letter-spacing:.32em; color:var(--fg-dim); }
+  #hud-hint{
+    position:fixed; left:50%; bottom:2.4rem; transform:translateX(-50%);
+    font-size:.82rem; color:var(--fg-dim); letter-spacing:.05em;
+    transition:opacity .5s var(--ease);
+  }
+  #sound-toggle{
+    font:inherit; font-size:.72rem; letter-spacing:.12em; color:var(--fg);
+    background:rgba(255,255,255,.06); border:1px solid var(--line);
+    border-radius:999px; padding:.5rem 1rem; cursor:pointer;
+    transition:background .2s var(--ease);
+  }
+  #sound-toggle:hover{ background:rgba(255,255,255,.14); }
+
+  #breadcrumb{
+    position:fixed; right:1.8rem; bottom:2.4rem; z-index:5;
+    display:flex; gap:.4rem;
+  }
+  #breadcrumb .dot{
+    width:7px; height:7px; border-radius:50%; background:rgba(255,255,255,.18);
+    transition:background .3s var(--ease), transform .3s var(--ease);
+  }
+  #breadcrumb .dot.is-active{ background:var(--accent); transform:scale(1.4); }
+
+  /* ---------------- 情報パネル(会話・ログ表示) ---------------- */
+  #panel{
+    position:fixed; left:50%; bottom:0; transform:translate(-50%, 14px);
+    width:min(560px, 88vw); z-index:6;
+    background:var(--panel-bg); border:1px solid var(--line);
+    border-radius:16px 16px 0 0; backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    padding:1.6rem 1.9rem 1.9rem;
+    opacity:0; pointer-events:none;
+    transition:opacity .6s var(--ease), transform .6s var(--ease);
+  }
+  #panel.is-visible{ opacity:1; transform:translate(-50%,0); pointer-events:auto; }
+  #panel .panel-index{ font-size:.7rem; letter-spacing:.3em; color:var(--accent); }
+  #panel h2{ margin:.5rem 0 .6rem; font-size:1.25rem; font-weight:600; }
+  #panel p{ margin:0 0 1rem; color:var(--fg-dim); line-height:1.8; font-size:.92rem; }
+  #panel .panel-close{
+    font:inherit; font-size:.74rem; letter-spacing:.1em; color:var(--bg-deep);
+    background:var(--accent); border:none; border-radius:999px;
+    padding:.5rem 1.1rem; cursor:pointer;
+  }
+
+  #credit{
+    position:fixed; left:1.8rem; bottom:2.4rem; z-index:5;
+    font-size:.68rem; color:rgba(255,255,255,.28); max-width:220px; line-height:1.6;
+  }
+</style>
+</head>
+<body>
+
+<div id="scene">
+  <div id="stars-far" class="starlayer"></div>
+  <div id="stars-mid" class="starlayer"></div>
+  <div id="stars-near" class="starlayer"></div>
+  <div id="world"></div>
+</div>
+
+<div id="hud">
+  <div id="hud-title">EQUINOX NAV / DEMO</div>
+  <button id="sound-toggle" type="button">🔈 AMBIENT OFF</button>
+</div>
+<div id="hud-hint">光る目印をクリック、またはドラッグして周囲を見渡してください</div>
+<div id="breadcrumb"></div>
+<div id="credit">再現デモ(オリジナル実装)<br>参照: Equinox — A WebGL Space Adventure by Little Workshop</div>
+
+<div id="panel">
+  <div class="panel-index"></div>
+  <h2 class="panel-title"></h2>
+  <p class="panel-text"></p>
+  <button class="panel-close" type="button">閉じる</button>
+</div>
+
+<script>
+/* ============================================================================
+ * createSpaceNavigator(sceneEl, options)
+ * ----------------------------------------------------------------------------
+ * 「固定ノード間をカメラがドリー移動しながら一人称で探索する」演出を
+ * CSS 3D transform + requestAnimationFrame だけで再現する再利用可能な部品。
+ * 外部ライブラリ(Three.js等)には依存しません。
+ *
+ * 使い方(このファイルの一番下にある呼び出し例も参照):
+ *
+ *   const nav = createSpaceNavigator(document.getElementById('scene'), {
+ *     nodes: [
+ *       { id:'a', x:0,    y:0,   z:0,    title:'見出し', text:'本文' },
+ *       { id:'b', x:420,  y:-80, z:-650, title:'見出し', text:'本文' },
+ *     ],
+ *     onArrive: (node) => console.log('arrived at', node.id),
+ *   });
+ *   nav.goTo('b'); // 任意のタイミングでコードから移動させることも可能
+ *
+ * 仕組みの要点:
+ *   1. #world 要素(preserve-3d)の中にノードを translate3d(x,y,z) で配置する。
+ *   2. 「カメラを動かす」代わりに #world 全体を逆方向に translate3d する。
+ *      これにより perspective が効いた自然な奥行き移動(ドリー)になる。
+ *   3. 目標座標へは毎フレーム指数減衰(lerp)で追従させ、慣性のある
+ *      滑らかなカメラワークを作る(イージング関数もCSS transitionも不要)。
+ * ==========================================================================*/
+function createSpaceNavigator(sceneEl, options) {
+  const worldEl = sceneEl.querySelector('#world');
+  const nodes = options.nodes;
+  const onArrive = options.onArrive || function () {};
+
+  // カメラの現在位置と目標位置。z は「奥」がマイナス方向。
+  const cam = { x: 0, y: 0, z: 0 };
+  const target = { x: 0, y: 0, z: 0 };
+  let currentId = null;
+  let dragBias = { x: 0, y: 0 }; // ドラッグで周囲を見渡す用のオフセット
+  let dragTargetBias = { x: 0, y: 0 };
+
+  const nodeEls = {};
+
+  // --- ノードのDOM生成 -------------------------------------------------
+  nodes.forEach((node) => {
+    const el = document.createElement('div');
+    el.className = 'node';
+    el.style.transform = `translate3d(${node.x}px, ${node.y}px, ${node.z}px)`;
+    el.innerHTML = `
+      <button class="node-hit" type="button" aria-label="${node.title}">
+        <span class="node-ring"></span>
+        <span class="node-core"></span>
+        <span class="node-label">${node.title}</span>
+      </button>`;
+    el.querySelector('.node-hit').addEventListener('click', () => goTo(node.id));
+    worldEl.appendChild(el);
+    nodeEls[node.id] = el;
+  });
+
+  // --- 目的のノードへカメラを移動させる ---------------------------------
+  function goTo(id) {
+    const node = nodes.find((n) => n.id === id);
+    if (!node || id === currentId) return;
+    if (currentId) nodeEls[currentId].classList.remove('is-current');
+    nodeEls[id].classList.add('is-current', 'is-visited');
+    currentId = id;
+
+    // カメラは目標ノードの少し手前(z + 260)に止まる = 相手にめり込まない
+    target.x = node.x;
+    target.y = node.y;
+    target.z = node.z + 260;
+
+    onArrive(node, nodes.indexOf(node));
+  }
+
+  // --- ドラッグで周囲を見渡す(視点バイアス) -----------------------------
+  let dragging = false, lastX = 0, lastY = 0;
+  sceneEl.addEventListener('pointerdown', (e) => {
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+  });
+  window.addEventListener('pointerup', () => (dragging = false));
+  window.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    dragTargetBias.x += (e.clientX - lastX) * 0.4;
+    dragTargetBias.y += (e.clientY - lastY) * 0.4;
+    dragTargetBias.x = Math.max(-140, Math.min(140, dragTargetBias.x));
+    dragTargetBias.y = Math.max(-100, Math.min(100, dragTargetBias.y));
+    lastX = e.clientX; lastY = e.clientY;
+  });
+
+  // --- 毎フレーム: 指数減衰でカメラを追従させる + 浮遊アイドルモーション ---
+  let t = 0;
+  function tick() {
+    t += 1;
+    cam.x += (target.x - cam.x) * 0.045;
+    cam.y += (target.y - cam.y) * 0.045;
+    cam.z += (target.z - cam.z) * 0.045;
+    dragBias.x += (dragTargetBias.x - dragBias.x) * 0.08;
+    dragBias.y += (dragTargetBias.y - dragBias.y) * 0.08;
+
+    // 静止中も宇宙船が漂っているようにゆっくり呼吸させる
+    const idleX = Math.sin(t * 0.006) * 10;
+    const idleY = Math.cos(t * 0.005) * 6;
+
+    const px = -(cam.x) - dragBias.x + idleX;
+    const py = -(cam.y) - dragBias.y + idleY;
+    const pz = -(cam.z);
+    const rotY = dragBias.x * 0.05;
+    const rotX = -dragBias.y * 0.05;
+
+    worldEl.style.transform =
+      `translate3d(${px}px, ${py}px, ${pz}px) rotateY(${rotY}deg) rotateX(${rotX}deg)`;
+
+    // 星の層にも視差を少しだけ与える(手前の層ほど大きく動く)
+    sceneEl.querySelector('#stars-near').style.transform = `translate3d(${px * 0.05}px, ${py * 0.05}px, 0)`;
+    sceneEl.querySelector('#stars-mid').style.transform = `translate3d(${px * 0.02}px, ${py * 0.02}px, 0)`;
+
+    requestAnimationFrame(tick);
+  }
+  tick();
+
+  return { goTo, nodes };
+}
+
+/* ============================================================================
+ * ここから下は上の部品を使った「呼び出し例」= このデモ固有のセットアップ。
+ * ノードのタイトル・本文はすべて架空のダミーテキストです。
+ * ==========================================================================*/
+
+// 星を大量のCSS box-shadowドットとして1回だけ生成する軽量テクニック
+function paintStars(el, count, size, opacity) {
+  const shadows = [];
+  const spread = 3000;
+  for (let i = 0; i < count; i++) {
+    const x = Math.round(Math.random() * spread - spread / 2);
+    const y = Math.round(Math.random() * spread - spread / 2);
+    shadows.push(`${x}px ${y}px 0 rgba(255,255,255,${opacity})`);
+  }
+  el.style.width = size + 'px';
+  el.style.height = size + 'px';
+  el.style.borderRadius = '50%';
+  el.style.boxShadow = shadows.join(',');
+}
+paintStars(document.getElementById('stars-far'), 220, 1, 0.55);
+paintStars(document.getElementById('stars-mid'), 140, 1.6, 0.75);
+paintStars(document.getElementById('stars-near'), 70, 2.2, 0.95);
+
+const NODES = [
+  { id: 'bridge',   x: 0,    y: 0,    z: 0,     title: 'ブリッジ',       text: 'damaged reactor core を再起動するため、まず船内の主要区画を巡回する必要がある。左右に見える光点をクリックして移動しよう。' },
+  { id: 'reactor',  x: 520,  y: -60,  z: -680,  title: '反応炉室',       text: '反応炉のコンソールが点滅している。配線の一部が焼き切れているようだ ―― この部屋はダミーの探索ポイントです。' },
+  { id: 'cargo',    x: -480, y: 90,   z: -1300, title: '貨物区画',       text: '漂流物の中に古い航行ログが見つかった。' },
+  { id: 'observ',   x: 60,   y: -140, z: -1980, title: '観測デッキ',     text: '大きな窓の外には、生成された(架空の)星雲が広がっている。ここが最後のノード。' },
+];
+
+// --- 情報パネルの表示 -----------------------------------------------------
+const panelEl = document.getElementById('panel');
+function showPanel(node, index) {
+  panelEl.querySelector('.panel-index').textContent =
+    `NODE ${String(index + 1).padStart(2, '0')} / ${NODES.length}`;
+  panelEl.querySelector('.panel-title').textContent = node.title;
+  panelEl.querySelector('.panel-text').textContent = node.text;
+  setTimeout(() => panelEl.classList.add('is-visible'), 550);
+}
+panelEl.querySelector('.panel-close').addEventListener('click', () => {
+  panelEl.classList.remove('is-visible');
+});
+
+// --- パンくず(訪問済みノードの進捗ドット) ---------------------------------
+const breadcrumbEl = document.getElementById('breadcrumb');
+NODES.forEach(() => {
+  const dot = document.createElement('span');
+  dot.className = 'dot';
+  breadcrumbEl.appendChild(dot);
+});
+function updateBreadcrumb(activeIndex) {
+  [...breadcrumbEl.children].forEach((dot, i) => {
+    dot.classList.toggle('is-active', i === activeIndex);
+  });
+}
+
+// ノード定義がすべて揃ったところで探索ロジックを起動する
+const nav = createSpaceNavigator(document.getElementById('scene'), {
+  nodes: NODES,
+  onArrive(node, index) {
+    showPanel(node, index);
+    updateBreadcrumb(index);
+  },
+});
+nav.goTo('bridge');
+
+// --- ヒント文言をノード移動後に一度だけフェードアウト ----------------------
+let hintShown = false;
+document.getElementById('scene').addEventListener('pointerdown', () => {
+  if (hintShown) return;
+  hintShown = true;
+  document.getElementById('hud-hint').style.opacity = '0';
+});
+
+/* ============================================================================
+ * 環境音(エンジン・ハム)。実サイトの音源は使わず、Web Audio API の
+ * オシレーターだけでゼロから生成した擬似ドローン音。
+ * ブラウザの自動再生ポリシーに従い、ユーザー操作後にのみ再生する。
+ * ==========================================================================*/
+let audioCtx = null;
+let ambientNodes = null;
+function startAmbient() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const master = audioCtx.createGain();
+  master.gain.value = 0.0;
+  master.connect(audioCtx.destination);
+
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 420;
+  filter.connect(master);
+
+  // 2つのデチューンした低い正弦波でうなり(ビート)を作る
+  const osc1 = audioCtx.createOscillator();
+  osc1.type = 'sine'; osc1.frequency.value = 55;
+  const osc2 = audioCtx.createOscillator();
+  osc2.type = 'sine'; osc2.frequency.value = 55.6;
+  osc1.connect(filter); osc2.connect(filter);
+  osc1.start(); osc2.start();
+
+  // ゆっくりしたLFOで音量を揺らし、単調にならないようにする
+  const lfo = audioCtx.createOscillator();
+  lfo.frequency.value = 0.08;
+  const lfoGain = audioCtx.createGain();
+  lfoGain.gain.value = 0.015;
+  lfo.connect(lfoGain); lfoGain.connect(master.gain);
+  lfo.start();
+
+  master.gain.linearRampToValueAtTime(0.05, audioCtx.currentTime + 1.5);
+  ambientNodes = { master, osc1, osc2, lfo };
+}
+const soundBtn = document.getElementById('sound-toggle');
+let soundOn = false;
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  if (soundOn) {
+    if (!audioCtx) startAmbient();
+    else audioCtx.resume();
+    ambientNodes.master.gain.linearRampToValueAtTime(0.05, audioCtx.currentTime + 1);
+    soundBtn.textContent = '🔊 AMBIENT ON';
+  } else {
+    if (ambientNodes) ambientNodes.master.gain.linearRampToValueAtTime(0.0001, audioCtx.currentTime + 0.6);
+    soundBtn.textContent = '🔈 AMBIENT OFF';
+  }
+});
+</script>
+</body>
+</html>
