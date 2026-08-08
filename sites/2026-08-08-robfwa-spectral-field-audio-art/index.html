@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spectral Field 風 音声反応ジェネラティブアート — 再現デモ</title>
+<style>
+  :root{
+    --bg:#05060a;
+    --fg:#e8e8ec;
+    --accent:#7cf7d0;
+    --line:rgba(255,255,255,.28);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;overflow:hidden;}
+  #canvas{position:fixed;inset:0;width:100%;height:100%;display:block;}
+
+  #ui{position:fixed;left:0;right:0;top:0;padding:24px;display:flex;flex-direction:column;
+    gap:14px;align-items:flex-start;pointer-events:none;}
+  #ui *{pointer-events:auto;}
+
+  #dropzone{border:1px dashed var(--line);border-radius:14px;padding:28px 32px;max-width:420px;
+    -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);background:rgba(10,10,14,.35);
+    transition:border-color .2s,background .2s;}
+  #dropzone.dragover{border-color:var(--accent);background:rgba(124,247,208,.08);}
+  #dropzone p{margin:6px 0;font-size:13px;line-height:1.7;opacity:.85;}
+  #dropzone strong{color:var(--accent);}
+
+  .pill-btn{background:transparent;border:1px solid var(--line);color:var(--fg);padding:9px 18px;
+    border-radius:999px;font-size:12px;letter-spacing:.05em;cursor:pointer;transition:.15s;}
+  .pill-btn:hover{border-color:var(--accent);color:var(--accent);}
+  .pill-btn:disabled{opacity:.3;cursor:not-allowed;}
+
+  #controls{display:flex;gap:8px;}
+  #controls[hidden]{display:none;}
+  #meta{font-size:11px;opacity:.55;letter-spacing:.08em;text-transform:uppercase;}
+  label.file-pick{cursor:pointer;text-decoration:underline;font-size:12px;display:inline-block;margin-top:4px;}
+  input[type=file]{display:none;}
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="ui">
+  <div id="dropzone">
+    <p><strong>音声ファイルをドロップ</strong>すると、その曲だけのジェネラティブアートが生成されます。</p>
+    <p>MP3 / WAV / FLAC 対応。すべてブラウザ内(Web Audio API)で処理され、音声は外部に送信されません。</p>
+    <label class="file-pick">
+      またはクリックしてファイルを選択
+      <input type="file" id="fileInput" accept="audio/*">
+    </label>
+  </div>
+  <div id="controls" hidden>
+    <button class="pill-btn" id="playBtn">再生 / 一時停止</button>
+    <button class="pill-btn" id="saveBtn">PNGとして保存</button>
+  </div>
+  <div id="meta"></div>
+</div>
+
+<script>
+/*
+ * Spectral Field 風 音声反応ジェネラティブアート（再現デモ）
+ * ------------------------------------------------------------
+ * 元サイト「Spectral Field」(https://www.robfwa.com/) の表現コンセプトを
+ * 独自実装で再現した学習用コードです。元サイトのソースコードは一切参照・
+ * 複製しておらず、観察できた「音声ファイルをドロップすると、その曲固有の
+ * ジェネラティブアートが描かれる」という仕組みだけをゼロから実装しています。
+ *
+ * 使い方（自分のプロジェクトへの組み込み方）:
+ *   1. このファイルをそのまま開くか、<canvas id="canvas"> と
+ *      ドロップゾーン一式を自分のHTMLにコピーする。
+ *   2. 下の SpectralField オブジェクトを <script> として読み込み、
+ *      SpectralField.init(document.getElementById('canvas')) を呼ぶ。
+ *   3. 音声ファイルを SpectralField.loadFile(file) に渡すと再生と
+ *      描画が始まる（File Drop / <input type="file"> どちらでも可）。
+ */
+const SpectralField = (() => {
+  const TAU = Math.PI * 2;
+  const PARTICLE_COUNT = 480;   // 円周上に配置する粒子の数
+  const USABLE_BINS = 200;      // 高域のほぼ無音な帯域は使わず、低〜中域を使う
+
+  let canvas, ctx, dpr = 1;
+  let width = 0, height = 0, cx = 0, cy = 0;
+
+  let audioCtx, analyser, sourceNode, audioEl;
+  let freqData;                 // Uint8Array(analyser.frequencyBinCount)
+  let particles = [];
+  let rotation = 0;
+  let hueBase = 200;
+  let rafId = null;
+
+  // --- ユーティリティ -----------------------------------------------
+
+  // ファイル名から決定論的な数値ハッシュを作る。
+  // これを色相のベースにすることで「曲ごとに一意な配色」を再現する。
+  function hashString(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) {
+      h = (h * 31 + str.charCodeAt(i)) >>> 0;
+    }
+    return h;
+  }
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    width = canvas.clientWidth;
+    height = canvas.clientHeight;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cx = width / 2;
+    cy = height / 2;
+  }
+
+  // 円周上に PARTICLE_COUNT 個の粒子を配置し、それぞれに
+  // 周波数帯(band)を1つ割り当てておく。以後この割り当ては固定。
+  function buildParticles() {
+    particles = [];
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const angle = (i / PARTICLE_COUNT) * TAU;
+      const band = Math.floor((i / PARTICLE_COUNT) * USABLE_BINS);
+      particles.push({
+        angle,
+        band,
+        jitter: Math.random() * 6,          // 半径方向の微小なばらつき
+        hueSpread: (Math.random() - 0.5) * 40 // 粒子ごとの色相の揺らぎ
+      });
+    }
+  }
+
+  // --- 音声セットアップ -----------------------------------------------
+
+  function teardownAudio() {
+    if (rafId) cancelAnimationFrame(rafId), rafId = null;
+    if (sourceNode) { try { sourceNode.disconnect(); } catch (e) {} }
+    if (audioEl) { audioEl.pause(); URL.revokeObjectURL(audioEl.src); }
+  }
+
+  function loadFile(file) {
+    teardownAudio();
+
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    audioEl = new Audio();
+    audioEl.src = URL.createObjectURL(file);
+    audioEl.crossOrigin = 'anonymous';
+
+    sourceNode = audioCtx.createMediaElementSource(audioEl);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;               // Spectral Field と同じ解像度で観察
+    analyser.smoothingTimeConstant = 0.82; // 動きをなめらかにする
+    freqData = new Uint8Array(analyser.frequencyBinCount);
+
+    sourceNode.connect(analyser);
+    analyser.connect(audioCtx.destination);
+
+    // ファイル名からその曲固有のパレットを決定する
+    hueBase = hashString(file.name) % 360;
+    rotation = 0;
+    buildParticles();
+
+    // キャンバスをリセットして新しい作品を描き始める
+    ctx.fillStyle = '#05060a';
+    ctx.fillRect(0, 0, width, height);
+
+    audioEl.addEventListener('loadedmetadata', () => {
+      document.getElementById('meta').textContent =
+        `${file.name} ・ ${formatTime(audioEl.duration)}`;
+    });
+
+    audioEl.play();
+    document.getElementById('controls').hidden = false;
+    if (!rafId) draw();
+  }
+
+  function togglePlay() {
+    if (!audioEl) return;
+    if (audioEl.paused) audioEl.play(); else audioEl.pause();
+  }
+
+  function formatTime(sec) {
+    if (!isFinite(sec)) return '';
+    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  // --- 描画ループ -----------------------------------------------------
+
+  function draw() {
+    rafId = requestAnimationFrame(draw);
+    if (!analyser) return;
+
+    analyser.getByteFrequencyData(freqData);
+
+    // 低域(ベース)の平均エネルギーを回転速度と全体の脈動に使う
+    let bassSum = 0;
+    for (let i = 0; i < 24; i++) bassSum += freqData[i];
+    const bass = bassSum / 24 / 255;
+
+    rotation += 0.0015 + bass * 0.01;
+
+    // 前フレームをうっすら残すことで「描き足していく」軌跡を作る
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(5, 6, 10, 0.10)';
+    ctx.fillRect(0, 0, width, height);
+
+    // 発光する粒子は加算合成で重ねて描く
+    ctx.globalCompositeOperation = 'lighter';
+
+    const innerR = Math.min(width, height) * 0.08 * (1 + bass * 0.4);
+    const outerR = Math.min(width, height) * 0.42;
+
+    for (const p of particles) {
+      const value = freqData[p.band] / 255;         // 0〜1
+      const radius = innerR + value * outerR + p.jitter;
+      const angle = p.angle + rotation;
+      const x = cx + Math.cos(angle) * radius;
+      const y = cy + Math.sin(angle) * radius;
+
+      const hue = (hueBase + p.hueSpread + value * 60) % 360;
+      const size = 1 + value * 3.2;
+
+      ctx.beginPath();
+      ctx.fillStyle = `hsla(${hue}, 85%, ${45 + value * 30}%, ${0.15 + value * 0.55})`;
+      ctx.arc(x, y, size, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  // --- 公開API ---------------------------------------------------------
+
+  function init(canvasEl) {
+    canvas = canvasEl;
+    ctx = canvas.getContext('2d');
+    resize();
+    window.addEventListener('resize', resize);
+    ctx.fillStyle = '#05060a';
+    ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  }
+
+  function saveAsPng() {
+    const link = document.createElement('a');
+    link.download = 'spectral-field.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  }
+
+  return { init, loadFile, togglePlay, saveAsPng };
+})();
+
+// --- ページ側の配線(ドロップゾーン / ボタン) ----------------------------
+(() => {
+  const canvas = document.getElementById('canvas');
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const playBtn = document.getElementById('playBtn');
+  const saveBtn = document.getElementById('saveBtn');
+
+  SpectralField.init(canvas);
+
+  ['dragenter', 'dragover'].forEach(evt =>
+    dropzone.addEventListener(evt, e => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    })
+  );
+  ['dragleave', 'drop'].forEach(evt =>
+    dropzone.addEventListener(evt, e => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+    })
+  );
+  dropzone.addEventListener('drop', e => {
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('audio/')) SpectralField.loadFile(file);
+  });
+
+  fileInput.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (file) SpectralField.loadFile(file);
+  });
+
+  playBtn.addEventListener('click', () => SpectralField.togglePlay());
+  saveBtn.addEventListener('click', () => SpectralField.saveAsPng());
+})();
+</script>
+</body>
+</html>
