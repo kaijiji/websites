@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EXPLODED VIEW — スクロール分解ビュー × ライブ素材コンフィギュレーター 再現デモ</title>
+<meta name="description" content="Awwwards Site of the Day「iyO」(オーディオコンピュータのプロダクトサイト)の表現技法(1.6Mパーティクルのヒーロー・スクロール連動の3D分解=エクスプローデッドビュー・ホバーで浮き上がるホットスポット・リアルタイム素材/カラー切替コンフィギュレーター)を学習目的でオリジナル再現したデモ" />
+<style>
+  :root {
+    --bg: #07080b;
+    --panel: rgba(10, 12, 18, .78);
+    --fg: #f2f4fb;
+    --fg-dim: #8d92a8;
+    --accent: #7ce0c9;
+    --accent-warm: #ffb27a;
+    --line: rgba(242, 244, 251, .12);
+    --ease: cubic-bezier(.16, 1, .3, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font-family: "Helvetica Neue", Arial, "Hiragino Sans", "Yu Gothic", sans-serif;
+    overflow-x: hidden;
+  }
+  a { color: inherit; }
+
+  /* ---------- ヒーロー(パーティクルフィールド) ---------- */
+  #hero {
+    position: relative;
+    height: 100vh;
+    width: 100%;
+  }
+  #hero canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .hero-copy {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .hero-copy .eyebrow {
+    font-size: 12px;
+    letter-spacing: .35em;
+    color: var(--accent);
+    margin-bottom: 14px;
+    text-transform: uppercase;
+  }
+  .hero-copy h1 {
+    font-size: clamp(32px, 7vw, 84px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+  }
+  .hero-copy p {
+    color: var(--fg-dim);
+    font-size: 15px;
+    max-width: 440px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+  .scroll-hint {
+    position: absolute;
+    bottom: 36px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    letter-spacing: .2em;
+    color: var(--fg-dim);
+    z-index: 2;
+  }
+
+  /* ---------- 分解ビュー・セクション ---------- */
+  #explode-spacer {
+    position: relative;
+    height: 420vh;
+  }
+  #explode-stage {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    width: 100%;
+    overflow: hidden;
+    background: radial-gradient(ellipse at 50% 30%, #10131b 0%, #07080b 70%);
+  }
+  #explode-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .stage-heading {
+    position: absolute;
+    top: 8vh; left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    z-index: 3;
+    pointer-events: none;
+  }
+  .stage-heading .step {
+    font-size: 11px;
+    letter-spacing: .3em;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .stage-heading h2 {
+    font-size: clamp(20px, 3.4vw, 32px);
+    font-weight: 500;
+    margin: 0;
+  }
+
+  .hotspot {
+    position: absolute;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity .35s var(--ease), transform .35s var(--ease);
+    pointer-events: none;
+  }
+  .hotspot.visible { opacity: 1; transform: translateY(0); }
+  .hotspot .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px rgba(124, 224, 201, .18);
+  }
+  .hotspot .label {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(6px);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  /* ---------- コンフィギュレーター・セクション ---------- */
+  #configurator {
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10vh 6vw;
+    gap: 6vw;
+    flex-wrap: wrap;
+  }
+  #config-canvas-wrap {
+    position: relative;
+    width: min(560px, 92vw);
+    height: 440px;
+    border-radius: 24px;
+    overflow: hidden;
+    background: radial-gradient(circle at 50% 40%, #14161f 0%, #07080b 75%);
+    border: 1px solid var(--line);
+  }
+  #config-canvas-wrap canvas { display: block; width: 100%; height: 100%; }
+
+  .config-panel { width: min(360px, 92vw); }
+  .config-panel .eyebrow {
+    font-size: 12px; letter-spacing: .3em; color: var(--accent);
+    text-transform: uppercase; margin-bottom: 10px;
+  }
+  .config-panel h2 { font-size: 30px; margin: 0 0 14px; font-weight: 600; }
+  .config-panel p { color: var(--fg-dim); font-size: 14px; line-height: 1.75; margin-bottom: 28px; }
+
+  .swatch-group { margin-bottom: 22px; }
+  .swatch-group .group-label {
+    font-size: 11px; letter-spacing: .15em; color: var(--fg-dim);
+    text-transform: uppercase; margin-bottom: 10px;
+  }
+  .swatches { display: flex; gap: 10px; }
+  .swatch {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.15);
+    transition: transform .2s var(--ease), border-color .2s var(--ease);
+  }
+  .swatch:hover { transform: scale(1.1); }
+  .swatch.active { border-color: var(--fg); }
+
+  .finish-toggle { display: flex; gap: 8px; }
+  .finish-btn {
+    flex: 1;
+    padding: 10px 0;
+    text-align: center;
+    font-size: 12px;
+    letter-spacing: .05em;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--fg-dim);
+    cursor: pointer;
+    transition: all .2s var(--ease);
+  }
+  .finish-btn.active { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+
+  footer {
+    text-align: center;
+    padding: 60px 20px 40px;
+    color: var(--fg-dim);
+    font-size: 12px;
+    letter-spacing: .05em;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<section id="hero">
+  <canvas id="hero-canvas"></canvas>
+  <div class="hero-copy">
+    <div class="eyebrow">Exploded View Demo</div>
+    <h1>Inside&nbsp;the&nbsp;Machine</h1>
+    <p>1.6万点のパーティクルフィールド・スクロール連動の3D分解ビュー・リアルタイム素材コンフィギュレーターを再現した学習用デモです。</p>
+  </div>
+  <div class="scroll-hint">SCROLL ↓</div>
+</section>
+
+<section id="explode-spacer">
+  <div id="explode-stage">
+    <div class="stage-heading">
+      <div class="step" id="stage-step">STEP 01</div>
+      <h2 id="stage-title">Assembled</h2>
+    </div>
+    <canvas id="explode-canvas"></canvas>
+    <div class="hotspot" id="hotspot-shell"><span class="dot"></span><span class="label">アウターシェル</span></div>
+    <div class="hotspot" id="hotspot-driver"><span class="dot"></span><span class="label">ドライバーユニット</span></div>
+    <div class="hotspot" id="hotspot-board"><span class="dot"></span><span class="label">基板 / チップセット</span></div>
+    <div class="hotspot" id="hotspot-battery"><span class="dot"></span><span class="label">バッテリーセル</span></div>
+    <div class="hotspot" id="hotspot-tip"><span class="dot"></span><span class="label">イヤーチップ</span></div>
+  </div>
+</section>
+
+<section id="configurator">
+  <div id="config-canvas-wrap"><canvas id="config-canvas"></canvas></div>
+  <div class="config-panel">
+    <div class="eyebrow">Live Configurator</div>
+    <h2>色と質感を選ぶ</h2>
+    <p>カラーとフィニッシュ(素材の質感)を切り替えると、3Dモデルのマテリアルがその場で更新されます。テクスチャの貼り替えではなく、マテリアルパラメータの変更だけでリアルタイムに見た目が変わる仕組みです。</p>
+    <div class="swatch-group">
+      <div class="group-label">Color</div>
+      <div class="swatches" id="color-swatches"></div>
+    </div>
+    <div class="swatch-group">
+      <div class="group-label">Finish</div>
+      <div class="finish-toggle" id="finish-toggle">
+        <button class="finish-btn active" data-metalness="0.9" data-roughness="0.22">Metal</button>
+        <button class="finish-btn" data-metalness="0.05" data-roughness="0.85">Matte</button>
+        <button class="finish-btn" data-metalness="0.15" data-roughness="0.05">Glossy</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  参照元: <a href="https://www.iyo.ai" target="_blank" rel="noopener">iyO — www.iyo.ai</a>(Awwwards Site of the Day)を分析した学習用オリジナル再現デモです。詳しくは同フォルダの README.md を参照してください。
+</footer>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+
+/* ============================================================
+   1. ヒーロー: パーティクルフィールド
+   ============================================================ */
+function createParticleHero(canvas) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
+  camera.position.set(0, 0, 9);
+
+  const COUNT = 9000;
+  const positions = new Float32Array(COUNT * 3);
+  const basePositions = new Float32Array(COUNT * 3);
+  for (let i = 0; i < COUNT; i++) {
+    // 球殻状に分布させ、密度にゆらぎを持たせる
+    const r = 3.6 + Math.random() * 1.4;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    const x = r * Math.sin(phi) * Math.cos(theta);
+    const y = r * Math.sin(phi) * Math.sin(theta) * 0.72;
+    const z = r * Math.cos(phi);
+    positions.set([x, y, z], i * 3);
+    basePositions.set([x, y, z], i * 3);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({
+    size: 0.02,
+    color: 0x7ce0c9,
+    transparent: true,
+    opacity: 0.75,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const points = new THREE.Points(geo, mat);
+  scene.add(points);
+
+  const mouse = { x: 0, y: 0 };
+  addEventListener("pointermove", (e) => {
+    mouse.x = (e.clientX / innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+  });
+
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+
+  let t = 0;
+  function tick() {
+    t += 0.0035;
+    // 各点をベース位置から緩やかに揺らす(ノイズの代わりにsin合成)
+    const pos = geo.attributes.position.array;
+    for (let i = 0; i < COUNT; i++) {
+      const bx = basePositions[i * 3], by = basePositions[i * 3 + 1], bz = basePositions[i * 3 + 2];
+      const wob = Math.sin(t * 1.6 + i * 0.015) * 0.06;
+      pos[i * 3]     = bx + wob;
+      pos[i * 3 + 1] = by + Math.cos(t * 1.2 + i * 0.02) * 0.05;
+      pos[i * 3 + 2] = bz + wob;
+    }
+    geo.attributes.position.needsUpdate = true;
+
+    points.rotation.y += 0.0009;
+    // マウスに応じてカメラをわずかに振る(視差)
+    camera.position.x += (mouse.x * 1.2 - camera.position.x) * 0.03;
+    camera.position.y += (mouse.y * 0.8 - camera.position.y) * 0.03;
+    camera.lookAt(0, 0, 0);
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(tick);
+  }
+  tick();
+}
+createParticleHero(document.getElementById("hero-canvas"));
+
+/* ============================================================
+   2. スクロール連動エクスプローデッドビュー(3D分解図)
+   ============================================================ */
+function createExplodedView(canvas, stageEl) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+  camera.position.set(0, 0.4, 6.5);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const key = new THREE.DirectionalLight(0xffffff, 1.2);
+  key.position.set(3, 4, 5);
+  scene.add(key);
+  const rim = new THREE.PointLight(0x7ce0c9, 1.4, 20);
+  rim.position.set(-3, -1, 3);
+  scene.add(rim);
+
+  // プロダクトを構成する5つのパーツ。「assembled」時のy位置はすべて0付近にまとまる。
+  const group = new THREE.Group();
+  scene.add(group);
+
+  function makePart(geometry, color, assembledY, explodedY) {
+    const mesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({ color, metalness: 0.5, roughness: 0.35 })
+    );
+    mesh.userData = { assembledY, explodedY };
+    mesh.position.y = assembledY;
+    group.add(mesh);
+    return mesh;
+  }
+
+  const parts = {
+    shell:   makePart(new THREE.CapsuleGeometry(0.62, 0.9, 8, 24), 0xd8dbe4, 0,    1.9),
+    driver:  makePart(new THREE.CylinderGeometry(0.42, 0.42, 0.28, 32), 0x2b2e38, 0.05, 0.7),
+    board:   makePart(new THREE.BoxGeometry(0.62, 0.06, 0.34), 0x1c8f74, -0.05, -0.15),
+    battery: makePart(new THREE.CylinderGeometry(0.3, 0.3, 0.3, 24), 0xffb27a, -0.25, -0.95),
+    tip:     makePart(new THREE.ConeGeometry(0.3, 0.34, 24), 0xeceff5, 0.55, 1.45),
+  };
+  parts.tip.rotation.x = Math.PI;
+
+  // ホットスポットのDOM要素と、対応するパーツの3D位置を紐づける
+  const hotspotEls = {
+    shell: document.getElementById("hotspot-shell"),
+    driver: document.getElementById("hotspot-driver"),
+    board: document.getElementById("hotspot-board"),
+    battery: document.getElementById("hotspot-battery"),
+    tip: document.getElementById("hotspot-tip"),
+  };
+
+  const stepEl = document.getElementById("stage-step");
+  const titleEl = document.getElementById("stage-title");
+  const steps = [
+    { label: "STEP 01", title: "Assembled" },
+    { label: "STEP 02", title: "Outer Shell" },
+    { label: "STEP 03", title: "Internal Components" },
+    { label: "STEP 04", title: "Fully Exploded" },
+  ];
+
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+
+  const v = new THREE.Vector3();
+  function updateHotspot(el, mesh) {
+    v.copy(mesh.position);
+    v.project(camera);
+    const x = (v.x * 0.5 + 0.5) * canvas.clientWidth;
+    const y = (-v.y * 0.5 + 0.5) * canvas.clientHeight;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+  }
+
+  // 呼び出し側からスクロール進捗(0〜1)を渡してもらう
+  function setProgress(p) {
+    for (const key in parts) {
+      const mesh = parts[key];
+      mesh.position.y = THREE.MathUtils.lerp(mesh.userData.assembledY, mesh.userData.explodedY, p);
+    }
+    group.rotation.y = THREE.MathUtils.lerp(-0.5, 0.9, p);
+
+    const stepIndex = Math.min(steps.length - 1, Math.floor(p * steps.length));
+    stepEl.textContent = steps[stepIndex].label;
+    titleEl.textContent = steps[stepIndex].title;
+
+    const hotspotsVisible = p > 0.18;
+    for (const key in hotspotEls) {
+      hotspotEls[key].classList.toggle("visible", hotspotsVisible);
+    }
+  }
+  setProgress(0);
+
+  function tick() {
+    for (const key in hotspotEls) updateHotspot(hotspotEls[key], parts[key]);
+    renderer.render(scene, camera);
+    requestAnimationFrame(tick);
+  }
+  tick();
+
+  return { setProgress };
+}
+
+const explodedView = createExplodedView(
+  document.getElementById("explode-canvas"),
+  document.getElementById("explode-stage")
+);
+
+// #explode-spacer の高さぶんスクロールされる間、0→1の進捗に変換してビューへ渡す
+const spacer = document.getElementById("explode-spacer");
+function onScroll() {
+  const rect = spacer.getBoundingClientRect();
+  const total = rect.height - innerHeight;
+  const scrolled = -rect.top;
+  const progress = Math.min(1, Math.max(0, scrolled / total));
+  explodedView.setProgress(progress);
+}
+addEventListener("scroll", onScroll, { passive: true });
+onScroll();
+
+/* ============================================================
+   3. ライブ・マテリアルコンフィギュレーター
+   ============================================================ */
+function createConfigurator(canvas) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+  camera.position.set(0, 0.2, 4.2);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  const key = new THREE.DirectionalLight(0xffffff, 1.3);
+  key.position.set(2, 3, 4);
+  scene.add(key);
+  const fill = new THREE.PointLight(0x7ce0c9, 0.9, 10);
+  fill.position.set(-2, -1, 2);
+  scene.add(fill);
+
+  const material = new THREE.MeshStandardMaterial({ color: 0x7ce0c9, metalness: 0.9, roughness: 0.22 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.75, 1.1, 12, 32), material);
+  scene.add(body);
+  const accent = new THREE.Mesh(
+    new THREE.TorusGeometry(0.8, 0.03, 16, 48),
+    new THREE.MeshStandardMaterial({ color: 0x111318, metalness: 0.3, roughness: 0.5 })
+  );
+  accent.rotation.x = Math.PI / 2;
+  accent.position.y = 0.6;
+  scene.add(accent);
+
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+
+  let dragging = false, lastX = 0, rotY = 0.3, rotYTarget = 0.3;
+  canvas.addEventListener("pointerdown", (e) => { dragging = true; lastX = e.clientX; });
+  addEventListener("pointerup", () => dragging = false);
+  addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    rotYTarget += (e.clientX - lastX) * 0.008;
+    lastX = e.clientX;
+  });
+
+  function tick() {
+    rotY += (rotYTarget - rotY) * 0.12;
+    if (!dragging) rotYTarget += 0.0025; // 自動でゆっくり回転
+    body.rotation.y = rotY;
+    accent.rotation.z = rotY;
+    renderer.render(scene, camera);
+    requestAnimationFrame(tick);
+  }
+  tick();
+
+  return {
+    setColor(hex) { material.color.set(hex); },
+    setFinish(metalness, roughness) { material.metalness = metalness; material.roughness = roughness; },
+  };
+}
+
+const configurator = createConfigurator(document.getElementById("config-canvas"));
+
+// カラースウォッチの生成とクリックイベント
+const COLORS = [
+  { hex: 0x7ce0c9, name: "Mint" },
+  { hex: 0xffb27a, name: "Amber" },
+  { hex: 0xe4e6ee, name: "Silver" },
+  { hex: 0x2b2e38, name: "Graphite" },
+  { hex: 0xd66b6b, name: "Coral" },
+];
+const swatchWrap = document.getElementById("color-swatches");
+COLORS.forEach(({ hex, name }, i) => {
+  const el = document.createElement("div");
+  el.className = "swatch" + (i === 0 ? " active" : "");
+  el.style.background = `#${hex.toString(16).padStart(6, "0")}`;
+  el.title = name;
+  el.addEventListener("click", () => {
+    configurator.setColor(hex);
+    [...swatchWrap.children].forEach((c) => c.classList.remove("active"));
+    el.classList.add("active");
+  });
+  swatchWrap.appendChild(el);
+});
+
+// フィニッシュ(質感)ボタン
+document.querySelectorAll(".finish-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".finish-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    configurator.setFinish(parseFloat(btn.dataset.metalness), parseFloat(btn.dataset.roughness));
+  });
+});
+</script>
+</body>
+</html>
