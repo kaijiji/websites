@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2xA Studio 風 表現デモ — マグネティックカーソル / グリッド・ディストーション / マーキー / テキストリビール</title>
+<style>
+  /* =========================================================
+     デザイントークン: 実サイトの特徴と紹介されていた「#0F0F0F / #FDFDFD の
+     2色構成」に合わせ、アクセントカラーを足さずに濃淡だけで階調を作る。
+     ========================================================= */
+  :root{
+    --ink: #0f0f0f;
+    --paper: #fdfdfd;
+    --ink-70: rgba(15,15,15,.7);
+    --ink-45: rgba(15,15,15,.45);
+    --ink-18: rgba(15,15,15,.18);
+    --ink-08: rgba(15,15,15,.08);
+    --dur: .6s;
+    --ease: cubic-bezier(.16,1,.3,1);
+  }
+
+  *{ box-sizing:border-box; }
+  html{ scroll-behavior:smooth; }
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Helvetica Neue', Arial, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    -webkit-font-smoothing:antialiased;
+    cursor:none; /* カスタムカーソルに置き換えるため、標準カーソルは消す */
+    overflow-x:hidden;
+  }
+  /* タッチ端末ではカスタムカーソルを表示しないため、標準カーソルを戻す */
+  @media (hover:none), (pointer:coarse){
+    body{ cursor:auto; }
+    #cursor-dot, #cursor-ring{ display:none; }
+  }
+
+  a{ color:inherit; text-decoration:none; }
+
+  /* ---------------------------------------------------------
+     1. ノイズ/グレイン オーバーレイ用キャンバス
+     コード駆動の質感を出す、ごく薄いフィルムグレイン。
+     --------------------------------------------------------- */
+  #grain{
+    position:fixed; inset:0;
+    pointer-events:none;
+    z-index:50;
+    opacity:.05;
+    mix-blend-mode:multiply;
+    background-repeat:repeat;
+  }
+
+  /* ---------------------------------------------------------
+     2. カスタムカーソル(ドット + 遅延して追従するリング)
+     --------------------------------------------------------- */
+  #cursor-dot, #cursor-ring{
+    position:fixed;
+    top:0; left:0;
+    pointer-events:none;
+    z-index:9999;
+    border-radius:50%;
+    transform:translate(-50%,-50%);
+    will-change:transform;
+  }
+  #cursor-dot{
+    width:6px; height:6px;
+    background:var(--ink);
+    transition:opacity .2s;
+  }
+  #cursor-ring{
+    width:36px; height:36px;
+    border:1px solid var(--ink-45);
+    transition:width var(--dur) var(--ease), height var(--dur) var(--ease),
+               border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+    display:flex; align-items:center; justify-content:center;
+    font-size:10px; letter-spacing:.05em; text-transform:uppercase;
+  }
+  #cursor-ring.is-hover{
+    width:88px; height:88px;
+    background:var(--ink);
+    border-color:var(--ink);
+    color:var(--paper);
+  }
+  #cursor-ring .cursor-label{
+    opacity:0; transform:scale(.6);
+    transition:opacity .25s var(--ease), transform .25s var(--ease);
+  }
+  #cursor-ring.is-hover .cursor-label{ opacity:1; transform:scale(1); }
+
+  /* ---------------------------------------------------------
+     レイアウト共通
+     --------------------------------------------------------- */
+  header{
+    position:fixed; top:0; left:0; right:0; z-index:40;
+    display:flex; justify-content:space-between; align-items:center;
+    padding:24px clamp(20px,4vw,48px);
+    mix-blend-mode:difference;
+    color:var(--paper);
+    font-size:13px; letter-spacing:.04em;
+  }
+  header nav{ display:flex; gap:28px; }
+
+  section{ padding:0 clamp(20px,4vw,48px); }
+
+  .hero{
+    min-height:100svh;
+    display:flex; flex-direction:column; justify-content:center;
+    padding-top:96px;
+  }
+  .eyebrow{
+    display:flex; align-items:center; gap:10px;
+    font-size:12px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--ink-45);
+    margin-bottom:22px;
+  }
+  .eyebrow::before{
+    content:''; display:inline-block; width:7px; height:7px; border-radius:50%;
+    background:var(--ink); animation:blink 1.6s ease-in-out infinite;
+  }
+  @keyframes blink{ 0%,100%{opacity:1;} 50%{opacity:.15;} }
+
+  h1.hero-title{
+    margin:0;
+    font-weight:600;
+    font-size:clamp(40px, 9vw, 128px);
+    line-height:.96;
+    letter-spacing:-.02em;
+  }
+
+  .hero-sub{
+    margin-top:28px;
+    max-width:46ch;
+    font-size:clamp(14px,1.6vw,17px);
+    line-height:1.7;
+    color:var(--ink-70);
+  }
+
+  /* ---------------------------------------------------------
+     3. スクロール連動テキストリビール
+     単語を overflow:hidden の箱に入れ、中の span を
+     clip-path で下から現す。IntersectionObserver で発火。
+     --------------------------------------------------------- */
+  .reveal-word{ overflow:hidden; display:inline-block; vertical-align:top; }
+  .reveal-word span{
+    display:inline-block;
+    transform:translateY(110%);
+    clip-path: inset(0 0 -10% 0);
+    transition:transform .9s var(--ease);
+    transition-delay:calc(var(--i,0) * 45ms);
+  }
+  .reveal-word.is-in span{ transform:translateY(0); }
+
+  /* ---------------------------------------------------------
+     4. マーキー(横無限スクロールする帯)
+     --------------------------------------------------------- */
+  .marquee{
+    border-top:1px solid var(--ink-18);
+    border-bottom:1px solid var(--ink-18);
+    overflow:hidden;
+    padding:20px 0;
+    margin:120px 0;
+  }
+  .marquee-track{
+    display:flex;
+    width:max-content;
+    will-change:transform;
+  }
+  .marquee-track span{
+    display:inline-flex;
+    align-items:center;
+    font-size:clamp(20px,3.4vw,40px);
+    font-weight:600;
+    letter-spacing:-.01em;
+    white-space:nowrap;
+    padding:0 22px;
+  }
+  .marquee-track span::after{
+    content:'◆';
+    font-size:.35em;
+    margin-left:22px;
+    opacity:.4;
+  }
+  .marquee[data-paused="true"] .marquee-track{ animation-play-state:paused; }
+
+  /* ---------------------------------------------------------
+     5. プロジェクトグリッド + グリッド・ディストーションカード
+     --------------------------------------------------------- */
+  .work-head{
+    display:flex; justify-content:space-between; align-items:flex-end;
+    margin-bottom:32px;
+  }
+  .work-head h2{ font-size:clamp(24px,3vw,34px); margin:0; }
+  .work-head p{ margin:0; font-size:13px; color:var(--ink-45); max-width:28ch; text-align:right; }
+
+  .work-grid{
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:2px;
+    background:var(--ink-18);
+    margin-bottom:140px;
+  }
+  @media (max-width:720px){ .work-grid{ grid-template-columns:1fr; } }
+
+  .work-card{
+    position:relative;
+    background:var(--paper);
+    aspect-ratio:4/3;
+    overflow:hidden;
+  }
+  .work-card canvas{
+    position:absolute; inset:0; width:100%; height:100%; display:block;
+  }
+  .work-card .meta{
+    position:absolute; left:20px; bottom:18px; z-index:2;
+    pointer-events:none;
+  }
+  .work-card .meta .num{ font-size:11px; color:var(--ink-45); }
+  .work-card .meta .name{ font-size:19px; font-weight:600; margin-top:4px; }
+
+  footer{
+    padding:60px clamp(20px,4vw,48px) 90px;
+    border-top:1px solid var(--ink-18);
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:18px;
+    font-size:13px; color:var(--ink-45);
+  }
+</style>
+</head>
+<body>
+
+  <div id="grain" aria-hidden="true"></div>
+  <div id="cursor-dot" aria-hidden="true"></div>
+  <div id="cursor-ring" aria-hidden="true"><span class="cursor-label">View</span></div>
+
+  <header>
+    <div class="logo">2xA*</div>
+    <nav>
+      <a href="#work" data-magnetic>Work</a>
+      <a href="#about" data-magnetic>Studio</a>
+      <a href="#contact" data-magnetic>Contact</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="eyebrow">Code‑driven design studio — Amsterdam / Athens (再現デモ)</div>
+    <h1 class="hero-title" data-reveal>Design, written in code.</h1>
+    <p class="hero-sub">
+      これは実在するデザインスタジオのサイトから読み取った「表現技法の仕組み」を
+      学習目的でゼロから再実装したデモです。実サイトのコード・画像・文言は含みません。
+    </p>
+  </section>
+
+  <div class="marquee" id="marquee" data-paused="false">
+    <div class="marquee-track" id="marqueeTrack">
+      <span>Digital Product Design</span>
+      <span>Brand Identity</span>
+      <span>Creative Development</span>
+      <span>UX / UI</span>
+    </div>
+  </div>
+
+  <section id="work">
+    <div class="work-head">
+      <h2 data-reveal>Selected Work</h2>
+      <p>カードにカーソルを乗せるとグリッドが計算で歪みます。マウスに近い格子点ほど強く押し出される、距離ベースの変位です。</p>
+    </div>
+    <div class="work-grid">
+      <article class="work-card" data-tone="#1c1c1c">
+        <canvas></canvas>
+        <div class="meta"><div class="num">01 — Identity</div><div class="name">Field Archive</div></div>
+      </article>
+      <article class="work-card" data-tone="#2a2a2a">
+        <canvas></canvas>
+        <div class="meta"><div class="num">02 — Platform</div><div class="name">Northloop</div></div>
+      </article>
+      <article class="work-card" data-tone="#141414">
+        <canvas></canvas>
+        <div class="meta"><div class="num">03 — Campaign</div><div class="name">Low Tech / High Life</div></div>
+      </article>
+      <article class="work-card" data-tone="#232323">
+        <canvas></canvas>
+        <div class="meta"><div class="num">04 — Web</div><div class="name">Perimeter</div></div>
+      </article>
+    </div>
+  </section>
+
+  <footer id="contact">
+    <span>© 2xA studio 風 学習用再現デモ</span>
+    <span>Amsterdam — Athens</span>
+    <span data-magnetic>hello@example.com</span>
+  </footer>
+
+<script>
+(function(){
+  "use strict";
+
+  /* =========================================================
+     1) initCustomCursor(ringSelector, dotSelector, magneticSelector)
+     ドット＋リングの2レイヤーカーソル。
+     - ドットはマウス位置に即座に追従(素早い動き)
+     - リングは easing で遅れて追従(なめらかな動き)
+     - data-magnetic 属性の要素の上では、リングが要素の中心に
+       弱く吸着し、拡大 + ラベル表示に変化する(マグネティック効果)
+     他プロジェクトで使う場合は、吸着させたい要素に
+     data-magnetic 属性を付けるだけでよい。
+     ========================================================= */
+  function initCustomCursor(ring, dot, magneticSelector){
+    let mouseX = innerWidth/2, mouseY = innerHeight/2;
+    let ringX = mouseX, ringY = mouseY;
+    let activeTarget = null;
+
+    addEventListener('mousemove', (e)=>{
+      mouseX = e.clientX; mouseY = e.clientY;
+      dot.style.transform = `translate(${mouseX}px, ${mouseY}px) translate(-50%,-50%)`;
+    }, { passive:true });
+
+    document.querySelectorAll(magneticSelector).forEach((el)=>{
+      el.addEventListener('mouseenter', ()=>{ activeTarget = el; ring.classList.add('is-hover'); });
+      el.addEventListener('mouseleave', ()=>{ activeTarget = null; ring.classList.remove('is-hover'); });
+    });
+
+    function loop(){
+      // 通常時: マウス位置へ easing で追従
+      // マグネティック時: ターゲット要素の中心へ弱く引き寄せられる
+      let targetX = mouseX, targetY = mouseY;
+      if (activeTarget){
+        const r = activeTarget.getBoundingClientRect();
+        targetX = r.left + r.width/2;
+        targetY = r.top + r.height/2;
+      }
+      ringX += (targetX - ringX) * 0.18;
+      ringY += (targetY - ringY) * 0.18;
+      ring.style.transform = `translate(${ringX}px, ${ringY}px) translate(-50%,-50%)`;
+      requestAnimationFrame(loop);
+    }
+    loop();
+  }
+
+  /* =========================================================
+     2) initGrain(el)
+     画面全体を覆う要素に、ランダムノイズのタイル画像を
+     CSSの background-image として敷き詰めるだけの軽量グレイン。
+     オフスクリーンcanvasで小さな正方形ノイズ(1辺 tile px)を
+     生成し、toDataURL() でPNG化して background-repeat:repeat
+     で並べる。画面サイズぶんのピクセルを毎回操作せずに済むため、
+     フルHDでも軽く、かつ荒いブロック状にならず細かい粒状に見える。
+     ========================================================= */
+  function initGrain(el){
+    const tile = 140; // このpx四方のノイズタイルを繰り返し敷き詰める
+    const off = document.createElement('canvas');
+    off.width = tile; off.height = tile;
+    const ctx = off.getContext('2d');
+    el.style.backgroundSize = tile + 'px ' + tile + 'px';
+
+    function draw(){
+      const imgData = ctx.createImageData(tile, tile);
+      for (let i=0; i<imgData.data.length; i+=4){
+        const v = Math.random()*255;
+        imgData.data[i] = v; imgData.data[i+1] = v; imgData.data[i+2] = v;
+        imgData.data[i+3] = 255;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      el.style.backgroundImage = `url(${off.toDataURL()})`;
+    }
+    draw();
+    setInterval(draw, 110); // 毎フレーム更新すると重いのでチラつく程度に間引く
+  }
+
+  /* =========================================================
+     3) initMarquee(trackEl, wrapperEl, pxPerSecond)
+     中身を複製して2セット並べ、その合計幅の半分だけ
+     transform:translateX を進めたらリセットする、
+     継ぎ目のない無限スクロール実装。ホバーで一時停止する。
+     ========================================================= */
+  function initMarquee(track, wrapper, pxPerSecond){
+    track.innerHTML += track.innerHTML; // 複製してループの継ぎ目を隠す
+    let x = 0, last = null, paused = false;
+
+    wrapper.addEventListener('mouseenter', ()=>{ paused = true; });
+    wrapper.addEventListener('mouseleave', ()=>{ paused = false; });
+
+    function frame(t){
+      if (last === null) last = t;
+      const dt = (t - last) / 1000;
+      last = t;
+      if (!paused){
+        x -= pxPerSecond * dt;
+        const half = track.scrollWidth / 2;
+        if (-x >= half) x += half; // 半分進んだら0地点相当まで戻す(見た目は継続)
+        track.style.transform = `translateX(${x}px)`;
+      }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  /* =========================================================
+     4) initTextReveal(selector)
+     見出しをスペース区切りの単語ごとに
+     <span class="reveal-word"><span>単語</span></span> へ分解し、
+     外側の span(overflow:hidden)で内側の span をマスクする。
+     画面に入ったら .is-in を付け、CSSの transition-delay
+     (--i カスタムプロパティ)で単語ごとに少しずつ遅れて立ち上がる。
+     ========================================================= */
+  function initTextReveal(selector){
+    document.querySelectorAll(selector).forEach((el)=>{
+      const words = el.textContent.trim().split(/\s+/);
+      el.textContent = '';
+      words.forEach((w, i)=>{
+        const outer = document.createElement('span');
+        outer.className = 'reveal-word';
+        outer.style.setProperty('--i', i);
+        const inner = document.createElement('span');
+        inner.textContent = w;
+        outer.appendChild(inner);
+        el.appendChild(outer);
+        el.appendChild(document.createTextNode(' '));
+      });
+    });
+
+    const io = new IntersectionObserver((entries)=>{
+      entries.forEach((entry)=>{
+        if (entry.isIntersecting){
+          entry.target.querySelectorAll('.reveal-word').forEach(w=>w.classList.add('is-in'));
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold:.4 });
+
+    document.querySelectorAll(selector).forEach(el=>io.observe(el));
+  }
+
+  /* =========================================================
+     5) initGridDistortion(canvas, cols, rows, tone)
+     「コードで作るデザイン」らしさの核となる、格子点の距離ベース
+     変位アニメーション。WebGL/シェーダーを使わず、Canvas2Dの
+     線描画だけで疑似的なメッシュ・ディストーションを再現する。
+
+     仕組み:
+       - canvas内に cols × rows の格子点を等間隔に配置
+       - マウスが要素内にある間、各格子点はカーソルとの距離に応じて
+         カーソルの反対方向(あるいは放射方向)へ押し出される
+       - マウスが離れると、各点はばね(spring)で元の位置へ戻る
+       - 毎フレーム、格子点を結ぶ横線・縦線を描き直す
+     ========================================================= */
+  function initGridDistortion(cardEl, cols, rows, tone){
+    const canvas = cardEl.querySelector('canvas');
+    const ctx = canvas.getContext('2d');
+    let w, h, points = [];
+    let mouse = { x:-9999, y:-9999, inside:false };
+
+    function build(){
+      const rect = cardEl.getBoundingClientRect();
+      w = canvas.width = rect.width * devicePixelRatio;
+      h = canvas.height = rect.height * devicePixelRatio;
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = rect.height + 'px';
+      points = [];
+      for (let r=0; r<=rows; r++){
+        for (let c=0; c<=cols; c++){
+          const baseX = (c/cols) * w;
+          const baseY = (r/rows) * h;
+          points.push({ baseX, baseY, x:baseX, y:baseY, vx:0, vy:0 });
+        }
+      }
+    }
+    build();
+    addEventListener('resize', build);
+
+    cardEl.addEventListener('mousemove', (e)=>{
+      const rect = cardEl.getBoundingClientRect();
+      mouse.x = (e.clientX - rect.left) * devicePixelRatio;
+      mouse.y = (e.clientY - rect.top) * devicePixelRatio;
+      mouse.inside = true;
+    });
+    cardEl.addEventListener('mouseleave', ()=>{ mouse.inside = false; });
+
+    const RADIUS = w ? w * 0.35 : 220;
+    const STIFFNESS = 0.08;   // 元の位置へ戻ろうとする力の強さ
+    const DAMPING = 0.82;     // 揺り戻しを抑える減衰
+    const PUSH = 46;          // カーソル直下での最大変位量(px, device pixel基準)
+
+    function step(){
+      const radius = w * 0.4;
+      points.forEach((p)=>{
+        if (mouse.inside){
+          const dx = p.baseX - mouse.x;
+          const dy = p.baseY - mouse.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          if (dist < radius){
+            const force = (1 - dist/radius);
+            const angle = Math.atan2(dy, dx);
+            // カーソルから遠ざかる方向へ押し出す(反発)
+            p.vx += Math.cos(angle) * force * PUSH * 0.06;
+            p.vy += Math.sin(angle) * force * PUSH * 0.06;
+          }
+        }
+        // ばね: 現在位置と基準位置の差を力として速度に加える
+        p.vx += (p.baseX - p.x) * STIFFNESS;
+        p.vy += (p.baseY - p.y) * STIFFNESS;
+        p.vx *= DAMPING; p.vy *= DAMPING;
+        p.x += p.vx; p.y += p.vy;
+      });
+
+      ctx.clearRect(0,0,w,h);
+      ctx.strokeStyle = tone;
+      ctx.lineWidth = Math.max(1, devicePixelRatio);
+      ctx.globalAlpha = 0.9;
+
+      // 横方向の線
+      for (let r=0; r<=rows; r++){
+        ctx.beginPath();
+        for (let c=0; c<=cols; c++){
+          const p = points[r*(cols+1)+c];
+          c===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y);
+        }
+        ctx.stroke();
+      }
+      // 縦方向の線
+      for (let c=0; c<=cols; c++){
+        ctx.beginPath();
+        for (let r=0; r<=rows; r++){
+          const p = points[r*(cols+1)+c];
+          r===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y);
+        }
+        ctx.stroke();
+      }
+      requestAnimationFrame(step);
+    }
+    step();
+  }
+
+  /* --------------------- 初期化 --------------------- */
+  initCustomCursor(document.getElementById('cursor-ring'), document.getElementById('cursor-dot'), '[data-magnetic]');
+  initGrain(document.getElementById('grain'));
+  initMarquee(document.getElementById('marqueeTrack'), document.getElementById('marquee'), 60);
+  initTextReveal('[data-reveal]');
+
+  document.querySelectorAll('.work-card').forEach((card)=>{
+    initGridDistortion(card, 14, 10, card.dataset.tone || '#1c1c1c');
+    card.setAttribute('data-magnetic', '');
+  });
+
+})();
+</script>
+</body>
+</html>

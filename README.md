@@ -11,6 +11,7 @@ Awwwards・CSS Design Awards・FWA などで評価されたサイトを1つず�
 
 | 日付 | サイト名 | 参照元URL | 主な表現技法 | フォルダ |
 | --- | --- | --- | --- | --- |
+| 2026-08-01 | 2xA(制作: 2xA studio) | https://2xa.studio/ | #0F0F0F/#FDFDFD の2色構成・マウス位置に吸着するマグネティックカーソル・カーソルとの距離に応じて格子点がばね物理で反発するグリッド・ディストーション・継ぎ目のない無限マーキーを持つコード駆動デザインスタジオ自身のポートフォリオサイト | [sites/2026-08-01-2xa-studio-code-grid-cursor](sites/2026-08-01-2xa-studio-code-grid-cursor) |
 | 2026-08-07 | Bruno Simon — Portfolio | https://bruno-simon.com | WebGL(Three.js) + 物理演算(cannon-es)による3Dドライビング・ポートフォリオ | [sites/2026-08-07-bruno-simon-portfolio](sites/2026-08-07-bruno-simon-portfolio) |
 | 2026-08-07 | Lacoste — Ace Breaker | https://members-play.lacoste.com/ace-breaker-rg/ | WebGL(Three.js)による3Dブロック崩しのブラウザゲーム演出(パーティクル・カメラシェイク・コンボ) | [sites/2026-08-07-lacoste-ace-breaker](sites/2026-08-07-lacoste-ace-breaker) |
 | 2026-08-07 | Serotoninn | https://serotoninn.com/ | キネティックタイポグラフィ・カスタムカーソル・ピン留め横スクロールギャラリー・フィルムグレイン演出を持つファッションブランドサイト | [sites/2026-08-07-serotoninn-brand-universe](sites/2026-08-07-serotoninn-brand-universe) |
