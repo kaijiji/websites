@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>パーティクル・イメージモーフ + カラフルトンネル 再現デモ</title>
+<meta name="description" content="Mathis Biabiany Portfolio (mathis-biabiany.fr) の象徴的な表現技法(図形を無数のパーティクルに分解し、渦を巻くカラフルなトンネルを通って次の図形へモーフィングする演出)を学習目的でオリジナル再現したデモ" />
+<style>
+  :root {
+    --bg: #06060a;
+    --fg: #f2f2f6;
+    --dim: rgba(242, 242, 246, .62);
+    --line: rgba(242, 242, 246, .16);
+    --accent: #7ce3ff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "Segoe UI", "Hiragino Sans", "Helvetica Neue", Arial, sans-serif;
+    overflow: hidden;
+  }
+  #app { position: relative; width: 100vw; height: 100vh; }
+  canvas#gl {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: pointer;
+    touch-action: none;
+  }
+  /* 画面全体に薄いビネットを重ねて、パーティクルの発光を引き立てる */
+  .vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+    background:
+      radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(0,0,0,.55) 100%),
+      linear-gradient(rgba(0,0,0,.35), transparent 18%, transparent 82%, rgba(0,0,0,.45));
+  }
+  .hud {
+    position: absolute;
+    z-index: 5;
+    pointer-events: none;
+  }
+  .hud a, .hud button { pointer-events: auto; }
+
+  .hud-title { top: 28px; left: 32px; max-width: 420px; }
+  .hud-title .eyebrow {
+    font-size: 11px;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 8px;
+  }
+  .hud-title h1 {
+    margin: 0 0 8px;
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: .01em;
+    line-height: 1.4;
+  }
+  .hud-title p {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: var(--dim);
+  }
+  .hud-title a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(124,227,255,.4); }
+  .hud-title a:hover { border-bottom-color: var(--accent); }
+
+  .hud-hint {
+    left: 50%;
+    bottom: 30px;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .hud-hint .msg {
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .dots { display: flex; gap: 9px; }
+  .dots button {
+    width: 8px; height: 8px; border-radius: 50%;
+    border: 1px solid var(--line);
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    transition: background .25s, border-color .25s, transform .25s;
+  }
+  .dots button.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    transform: scale(1.35);
+  }
+
+  .hud-corner {
+    right: 28px;
+    bottom: 28px;
+    font-size: 10.5px;
+    letter-spacing: .06em;
+    color: var(--dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+
+  @media (max-width: 640px) {
+    .hud-title { max-width: 78vw; top: 20px; left: 18px; }
+    .hud-title h1 { font-size: 17px; }
+    .hud-corner { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="gl"></canvas>
+  <div class="vignette"></div>
+
+  <div class="hud hud-title">
+    <p class="eyebrow">Reproduction demo / 学習用再現</p>
+    <h1>パーティクル・イメージモーフ<br />+ カラフルトンネル</h1>
+    <p>
+      元ネタ: <a href="https://www.mathis-biabiany.fr/" target="_blank" rel="noopener">Mathis Biabiany — Portfolio</a><br />
+      クリック / タップで図形を切り替え、または自動再生を待ってください。
+    </p>
+  </div>
+
+  <div class="hud hud-hint">
+    <div class="dots" id="dots"></div>
+    <div class="msg">Click / Tap to morph</div>
+  </div>
+
+  <div class="hud hud-corner">
+    Vanilla WebGL1 · no libraries<br />
+    Particle count: <span id="countLabel">-</span>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================================
+ * パーティクル・イメージモーフ + カラフルトンネル 再現デモ
+ * ----------------------------------------------------------------------------
+ * Mathis Biabiany のポートフォリオサイトを象徴する表現技法 ——
+ * 「図形(画像)をピクセル単位でサンプリングして無数のパーティクルに変換し、
+ *  クリックのたびに渦を巻くカラフルなトンネルを通り抜けて次の図形へ
+ *  モーフィングする」演出を、Three.js 等のライブラリを使わず
+ *  素のWebGL1 + バニラJSだけでゼロから再現したものです。
+ *
+ * 処理の流れ:
+ *   1) sampleShapeToPoints() … Canvas 2Dで図形を描画し、ピクセルをスキャンして
+ *                                「その図形の輪郭・内部を表す点群」を作る
+ *   2) 全ての図形の点群を同じパーティクル数に揃えてGPUバッファへアップロード
+ *   3) 頂点シェーダーで aStart(現在の図形) → 渦を巻きながら外側へ弾ける
+ *      → aEnd(次の図形) という3段階の動きを1本のイージング関数で表現
+ *   4) 加算合成(additive blending)の丸いスプライトで、発光する
+ *      パーティクルとして描画
+ *
+ * どの関数も他プロジェクトへそのまま持ち出せる小さな部品として書いています。
+ * カスタマイズ方法は一番下の「起動 / 使い方」セクションのコメントを参照してください。
+ * ============================================================================ */
+
+/* ------------------------------------------------------------------ *
+ * 0. 定数
+ * ------------------------------------------------------------------ */
+const PARTICLE_COUNT = 13000;      // パーティクル数(重い場合は減らしてOK)
+const TRANSITION_MS = 2200;        // 1回のモーフィングにかける時間(ms)
+const AUTO_ADVANCE_MS = 4600;      // 自動再生の間隔(ms)
+const SAMPLE_RES = 480;            // 図形サンプリング用オフスクリーンcanvasの解像度
+const SAMPLE_CELL = 4;             // サンプリング時のグリッド間隔(px)
+
+/* ------------------------------------------------------------------ *
+ * 1. 図形の定義(Canvas 2Dで描画する関数の配列)
+ *    ここを差し替えれば好きなロゴ・文字・シルエットに変更できます。
+ *    実サイトは実際の写真/作品画像を使っていますが、このデモは
+ *    著作権に配慮し、コードだけで生成した幾何学図形を使っています。
+ * ------------------------------------------------------------------ */
+const SHAPES = [
+  {
+    label: "Ring",
+    draw(ctx, w, h) {
+      ctx.translate(w / 2, h / 2);
+      ctx.lineWidth = w * 0.085;
+      ctx.strokeStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(0, 0, w * 0.32, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, w * 0.07, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+    },
+  },
+  {
+    label: "Diamond",
+    draw(ctx, w, h) {
+      ctx.translate(w / 2, h / 2);
+      ctx.rotate(Math.PI / 4);
+      const s = w * 0.33;
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(-s, -s, s * 2, s * 2);
+      ctx.clearRect(-s * 0.55, -s * 0.55, s * 1.1, s * 1.1);
+    },
+  },
+  {
+    label: "Waves",
+    draw(ctx, w, h) {
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = w * 0.04;
+      for (let row = 0; row < 3; row++) {
+        ctx.beginPath();
+        const yBase = h * 0.32 + row * h * 0.19;
+        for (let x = 0; x <= w; x += 4) {
+          const y = yBase + Math.sin((x / w) * Math.PI * 4 + row * 1.4) * h * 0.065;
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+    },
+  },
+  {
+    label: "Glyph",
+    draw(ctx, w, h) {
+      ctx.fillStyle = "#fff";
+      ctx.font = `800 ${w * 0.4}px "Helvetica Neue", Arial, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("3D", w / 2, h / 2);
+    },
+  },
+];
+
+/* ------------------------------------------------------------------ *
+ * 2. 図形 → パーティクル点群 への変換
+ *    Canvas 2Dで図形を白で描画し、ピクセルの不透明度をスキャンして
+ *    「図形がある場所」の座標(-1〜1に正規化)を集める。
+ *    候補点の中からランダムに(重複ジッター付きで)PARTICLE_COUNT個を
+ *    抽出することで、どの図形でも常に同じパーティクル数を保つ。
+ * ------------------------------------------------------------------ */
+function sampleShapeToPoints(drawFn, count) {
+  const off = document.createElement("canvas");
+  off.width = SAMPLE_RES;
+  off.height = SAMPLE_RES;
+  const ctx = off.getContext("2d");
+  ctx.clearRect(0, 0, SAMPLE_RES, SAMPLE_RES);
+  ctx.save();
+  drawFn(ctx, SAMPLE_RES, SAMPLE_RES);
+  ctx.restore();
+
+  const data = ctx.getImageData(0, 0, SAMPLE_RES, SAMPLE_RES).data;
+  const candidates = [];
+  for (let y = 0; y < SAMPLE_RES; y += SAMPLE_CELL) {
+    for (let x = 0; x < SAMPLE_RES; x += SAMPLE_CELL) {
+      const alpha = data[(y * SAMPLE_RES + x) * 4 + 3];
+      if (alpha > 128) {
+        const nx = (x / SAMPLE_RES) * 2 - 1;
+        const ny = -((y / SAMPLE_RES) * 2 - 1); // canvasはY下向き、GLはY上向きなので反転
+        candidates.push(nx, ny);
+      }
+    }
+  }
+  const total = candidates.length / 2 || 1;
+  const jitter = (SAMPLE_CELL / SAMPLE_RES) * 1.4;
+  const out = new Float32Array(count * 2);
+  for (let i = 0; i < count; i++) {
+    const pick = (Math.random() * total) | 0;
+    out[i * 2] = candidates[pick * 2] + (Math.random() - 0.5) * jitter;
+    out[i * 2 + 1] = candidates[pick * 2 + 1] + (Math.random() - 0.5) * jitter;
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. WebGL 基本ユーティリティ
+ * ------------------------------------------------------------------ */
+function compileShader(gl, type, src) {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+    throw new Error(gl.getShaderInfoLog(sh));
+  }
+  return sh;
+}
+
+function createProgram(gl, vsSrc, fsSrc) {
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compileShader(gl, gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(prog, compileShader(gl, gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(prog));
+  }
+  return prog;
+}
+
+/* ------------------------------------------------------------------ *
+ * 4. シェーダー
+ *    - aStart / aEnd: 現在の図形 / 次の図形での各パーティクルの位置
+ *    - aRand: 渦(トンネル)の角度・速度・半径・サイズをばらけさせる乱数
+ *    - aSeed: パーティクルごとに開始タイミングをずらす(0〜1)
+ *    - uProgress: 0(aStartのまま静止) → 1(aEndで静止) の全体進行度
+ *      e = イージング後の進行度。bulge = sin(e*PI) は e=0/1で0、e=0.5で最大になる
+ *      ため、「外へ弾けて渦を巻き→吸い込まれるように収束する」動きが1本の式で作れる。
+ * ------------------------------------------------------------------ */
+const VERTEX_SRC = `
+  attribute vec2 aStart;
+  attribute vec2 aEnd;
+  attribute vec4 aRand; // x,y: 角度/速度用の乱数  z: 半径・サイズの乱数  w: aSeed(ステagger用)
+
+  uniform float uProgress;
+  uniform float uTime;
+  uniform float uAspect;
+  uniform vec2 uParallax;
+  uniform float uPixelRatio;
+  uniform float uBaseSize;
+
+  varying float vHue;
+  varying float vGlow;
+
+  float easeInOut(float t) { return t * t * (3.0 - 2.0 * t); }
+
+  void main() {
+    float seed = aRand.w;
+    float stagger = seed * 0.55;
+    float local = clamp((uProgress - stagger) / max(0.0001, 1.0 - stagger), 0.0, 1.0);
+    float e = easeInOut(local);
+
+    vec2 base = mix(aStart, aEnd, e);
+
+    float bulge = sin(e * 3.14159265); // 0 -> 1 -> 0 : 弾けて→戻る
+    float angle = aRand.x * 6.2831853 + uTime * (0.5 + aRand.y * 1.1);
+    vec2 outward = vec2(cos(angle), sin(angle)) * (0.35 + aRand.z * 0.85);
+
+    vec2 pos = base + outward * bulge + uParallax * (0.4 + aRand.z * 0.6);
+    pos.x /= uAspect;
+
+    gl_Position = vec4(pos, 0.0, 1.0);
+
+    float size = uBaseSize * (0.55 + aRand.z * 0.9) * (1.0 + bulge * 2.1);
+    gl_PointSize = clamp(size * uPixelRatio, 1.0, 72.0);
+
+    vHue = fract(seed * 0.85 + uTime * 0.035 + bulge * 0.22);
+    vGlow = 0.55 + bulge * 0.45;
+  }
+`;
+
+const FRAGMENT_SRC = `
+  precision mediump float;
+  varying float vHue;
+  varying float vGlow;
+
+  vec3 hsv2rgb(vec3 c) {
+    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+  }
+
+  void main() {
+    vec2 uv = gl_PointCoord * 2.0 - 1.0;
+    float d = dot(uv, uv);
+    if (d > 1.0) discard;
+    float soft = smoothstep(1.0, 0.0, d);
+    vec3 col = hsv2rgb(vec3(vHue, 0.5, 1.0));
+    float alpha = soft * vGlow;
+    gl_FragColor = vec4(col * soft, alpha);
+  }
+`;
+
+/* ------------------------------------------------------------------ *
+ * 5. パーティクルシステム本体
+ *    createParticleSystem(gl) は、他のプロジェクトに移植する際も
+ *    このブロックごとコピーすれば単体で動くように作ってあります。
+ * ------------------------------------------------------------------ */
+function createParticleSystem(gl, count) {
+  const program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
+  const loc = {
+    aStart: gl.getAttribLocation(program, "aStart"),
+    aEnd: gl.getAttribLocation(program, "aEnd"),
+    aRand: gl.getAttribLocation(program, "aRand"),
+    uProgress: gl.getUniformLocation(program, "uProgress"),
+    uTime: gl.getUniformLocation(program, "uTime"),
+    uAspect: gl.getUniformLocation(program, "uAspect"),
+    uParallax: gl.getUniformLocation(program, "uParallax"),
+    uPixelRatio: gl.getUniformLocation(program, "uPixelRatio"),
+    uBaseSize: gl.getUniformLocation(program, "uBaseSize"),
+  };
+
+  // 角度・速度・半径・stagger用のランダム属性(全図形で共通、一度だけ生成)
+  const randData = new Float32Array(count * 4);
+  for (let i = 0; i < count; i++) {
+    randData[i * 4 + 0] = Math.random();
+    randData[i * 4 + 1] = Math.random();
+    randData[i * 4 + 2] = Math.random();
+    randData[i * 4 + 3] = Math.random();
+  }
+  const randBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, randBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, randData, gl.STATIC_DRAW);
+
+  const startBuffer = gl.createBuffer();
+  const endBuffer = gl.createBuffer();
+
+  function setShapePair(startPoints, endPoints) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, startBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, startPoints, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, endBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, endPoints, gl.DYNAMIC_DRAW);
+  }
+
+  function draw({ progress, time, aspect, parallax, pixelRatio, baseSize }) {
+    gl.useProgram(program);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, startBuffer);
+    gl.enableVertexAttribArray(loc.aStart);
+    gl.vertexAttribPointer(loc.aStart, 2, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, endBuffer);
+    gl.enableVertexAttribArray(loc.aEnd);
+    gl.vertexAttribPointer(loc.aEnd, 2, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, randBuffer);
+    gl.enableVertexAttribArray(loc.aRand);
+    gl.vertexAttribPointer(loc.aRand, 4, gl.FLOAT, false, 0, 0);
+
+    gl.uniform1f(loc.uProgress, progress);
+    gl.uniform1f(loc.uTime, time);
+    gl.uniform1f(loc.uAspect, aspect);
+    gl.uniform2f(loc.uParallax, parallax[0], parallax[1]);
+    gl.uniform1f(loc.uPixelRatio, pixelRatio);
+    gl.uniform1f(loc.uBaseSize, baseSize);
+
+    gl.drawArrays(gl.POINTS, 0, count);
+  }
+
+  return { setShapePair, draw };
+}
+
+/* ------------------------------------------------------------------ *
+ * 6. 起動 / 使い方
+ *    ・このブロックが「アプリケーション本体」です。
+ *    ・クリック / タップ、または自動再生タイマーで次の図形へモーフィングします。
+ *    ・下部のドットをクリックすると、その図形へ直接ジャンプできます。
+ *    ・自分のプロジェクトに組み込む場合は、SHAPES配列を自分の描きたい
+ *      図形(ロゴ・イニシャル・アイコン等)に差し替えるだけでOKです。
+ *      実写真を使いたい場合は draw(ctx,w,h) 内で
+ *      ctx.drawImage(image, 0, 0, w, h) を呼ぶ形に変更してください。
+ * ------------------------------------------------------------------ */
+(function main() {
+  const canvas = document.getElementById("gl");
+  const gl = canvas.getContext("webgl", { antialias: true, alpha: false });
+  if (!gl) {
+    document.body.innerHTML = "<p style='color:#fff;padding:24px'>WebGLに対応していないブラウザです。</p>";
+    return;
+  }
+
+  document.getElementById("countLabel").textContent = PARTICLE_COUNT.toLocaleString();
+
+  // 各図形をパーティクル点群に変換(起動時に一度だけ)
+  const shapePoints = SHAPES.map((s) => sampleShapeToPoints(s.draw, PARTICLE_COUNT));
+
+  const system = createParticleSystem(gl, PARTICLE_COUNT);
+
+  gl.clearColor(0.024, 0.024, 0.039, 1);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // 加算合成で発光させる
+
+  // ---- 状態管理 ----------------------------------------------------
+  let currentIdx = 0;
+  let currentPoints = shapePoints[0];
+  let pendingIdx = 0;
+  let animating = false;
+  let transitionStart = 0;
+  let progress = 0;
+  system.setShapePair(currentPoints, currentPoints);
+
+  function startTransition(nextIdx) {
+    if (animating || nextIdx === currentIdx) return;
+    pendingIdx = nextIdx;
+    animating = true;
+    transitionStart = performance.now();
+    system.setShapePair(currentPoints, shapePoints[nextIdx]);
+    updateDots();
+  }
+
+  function pickRandomOther() {
+    let i;
+    do { i = (Math.random() * SHAPES.length) | 0; } while (i === currentIdx);
+    return i;
+  }
+
+  // ---- ドットUI ------------------------------------------------------
+  const dotsEl = document.getElementById("dots");
+  SHAPES.forEach((s, i) => {
+    const b = document.createElement("button");
+    b.title = s.label;
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      startTransition(i);
+      resetAutoTimer();
+    });
+    dotsEl.appendChild(b);
+  });
+  function updateDots() {
+    [...dotsEl.children].forEach((b, i) => b.classList.toggle("active", i === pendingIdx));
+  }
+  updateDots();
+
+  // ---- クリック / タップで次の図形へ ---------------------------------
+  canvas.addEventListener("pointerdown", () => {
+    startTransition(pickRandomOther());
+    resetAutoTimer();
+  });
+
+  // ---- 自動再生 --------------------------------------------------
+  let autoTimer = null;
+  function resetAutoTimer() {
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(() => {
+      startTransition(pickRandomOther());
+      resetAutoTimer();
+    }, AUTO_ADVANCE_MS);
+  }
+  resetAutoTimer();
+
+  // ---- マウス視差(パララックス) ---------------------------------
+  const parallax = { target: [0, 0], current: [0, 0] };
+  window.addEventListener("pointermove", (ev) => {
+    parallax.target[0] = (ev.clientX / window.innerWidth) * 2 - 1;
+    parallax.target[1] = -((ev.clientY / window.innerHeight) * 2 - 1);
+  });
+
+  // ---- リサイズ ----------------------------------------------------
+  let width = 0, height = 0, pixelRatio = 1;
+  function resize() {
+    pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = Math.round(width * pixelRatio);
+    canvas.height = Math.round(height * pixelRatio);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // ---- メインループ --------------------------------------------------
+  const startTime = performance.now();
+  function frame(now) {
+    const t = (now - startTime) / 1000;
+
+    if (animating) {
+      const localT = (now - transitionStart) / TRANSITION_MS;
+      progress = Math.min(localT, 1);
+      if (localT >= 1) {
+        animating = false;
+        currentIdx = pendingIdx;
+        currentPoints = shapePoints[currentIdx];
+      }
+    }
+
+    parallax.current[0] += (parallax.target[0] - parallax.current[0]) * 0.06;
+    parallax.current[1] += (parallax.target[1] - parallax.current[1]) * 0.06;
+
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    system.draw({
+      progress,
+      time: t,
+      aspect: width / height,
+      parallax: [parallax.current[0] * 0.05, parallax.current[1] * 0.05],
+      pixelRatio,
+      baseSize: Math.max(2.4, Math.min(width, height) / 220),
+    });
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
