@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Page Flip Reveal Demo — MERSI Architecture 風 表現デモ</title>
+<style>
+  :root{
+    --paper:#F3EFE7;
+    --ink:#181510;
+    --line:rgba(24,21,16,.16);
+    --accent:#8A6F4B;
+    --ease:cubic-bezier(.19,1,.22,1);
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0;
+    background:var(--paper); color:var(--ink);
+    font-family:Georgia,"Hiragino Mincho ProN","Times New Roman",serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .sans{ font-family:-apple-system,"Hiragino Kaku Gothic ProN","Helvetica Neue",Arial,sans-serif; }
+
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:2.4rem 5vw 1.4rem;
+    border-bottom:1px solid var(--line);
+  }
+  header .logo{ font-size:1.15rem; letter-spacing:.14em; }
+  header nav{ font-size:.78rem; letter-spacing:.18em; opacity:.6; }
+  .sans.logo-mark{ font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; opacity:.55; }
+
+  .intro{
+    padding:4.5vw 5vw 3vw;
+    max-width:56ch;
+  }
+  .intro .eyebrow{
+    display:block; font-size:.72rem; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--accent); margin-bottom:1rem;
+  }
+  .intro h1{
+    font-size:clamp(1.9rem,4.4vw,3.2rem);
+    line-height:1.28; font-weight:400; margin:0;
+  }
+
+  /* ------------------------------------------------------------------
+   * プロジェクト一覧グリッド(本のインデックスのようなエディトリアルレイアウト)
+   * ------------------------------------------------------------------ */
+  .project-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
+    gap:1px;
+    background:var(--line);
+    margin:0 5vw 6vw;
+    border:1px solid var(--line);
+  }
+  .project-card{
+    background:var(--paper);
+    padding:2.2rem 1.8rem 1.8rem;
+    cursor:pointer;
+    position:relative;
+    min-height:340px;
+    display:flex; flex-direction:column;
+  }
+  .card-media{
+    flex:1;
+    border-radius:2px;
+    background:
+      linear-gradient(160deg, color-mix(in srgb, var(--tint) 55%, white) 0%, var(--tint) 100%);
+    position:relative;
+    overflow:hidden;
+    margin-bottom:1.4rem;
+  }
+  .card-media .card-num{
+    position:absolute; left:.9rem; bottom:.7rem;
+    font-size:3.2rem; color:rgba(255,255,255,.55);
+    line-height:1;
+  }
+  .card-title{ margin:0 0 .3rem; font-size:1.25rem; font-weight:400; }
+  .card-meta{ margin:0; font-size:.78rem; letter-spacing:.06em; opacity:.55; }
+
+  /* -------------------- カーソルに追従する "View" ラベル -------------------- */
+  #hover-label{
+    position:fixed; top:0; left:0; z-index:60;
+    width:92px; height:92px; margin:-46px 0 0 -46px;
+    border-radius:50%;
+    background:var(--ink); color:var(--paper);
+    display:flex; align-items:center; justify-content:center;
+    font-size:.72rem; letter-spacing:.14em; text-transform:uppercase;
+    pointer-events:none;
+    opacity:0; transform:scale(.4);
+    transition:opacity .25s var(--ease), transform .25s var(--ease);
+  }
+  #hover-label.is-visible{ opacity:1; transform:scale(1); }
+  @media (hover:none){ #hover-label{ display:none; } }
+
+  /* ------------------------------------------------------------------
+   * FLIP 詳細ページ(overlay-root にJSで生成する)
+   * ------------------------------------------------------------------ */
+  #overlay-root{ position:relative; z-index:40; }
+  .detail-page{
+    position:fixed; inset:0;
+    background:var(--paper);
+    overflow-y:auto;
+    will-change:transform;
+    box-shadow:0 30px 80px rgba(0,0,0,.25);
+  }
+  .detail-inner{ max-width:860px; margin:0 auto; padding:5vw 5vw 12vw; }
+  .detail-close{
+    position:sticky; top:0; z-index:5;
+    display:flex; justify-content:flex-end;
+    padding:1.6rem 5vw 0;
+    background:linear-gradient(var(--paper), transparent);
+  }
+  .detail-close button{
+    font-family:inherit; font-size:.8rem; letter-spacing:.1em;
+    background:none; border:1px solid var(--line); border-radius:999px;
+    padding:.55rem 1.3rem; cursor:pointer; color:var(--ink);
+  }
+  .detail-media{
+    height:min(58vh, 480px);
+    border-radius:2px;
+    margin:1.5rem 0 2.4rem;
+  }
+  .detail-eyebrow{
+    font-size:.74rem; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--accent); margin-bottom:.8rem;
+  }
+  .detail-title{ font-size:clamp(2.1rem,5vw,3.6rem); line-height:1.15; margin:0 0 1.6rem; font-weight:400; }
+  .detail-lead{ font-size:1.2rem; line-height:1.75; max-width:44ch; margin:0 0 2.2rem; }
+  .detail-body p{ font-size:1rem; line-height:1.9; max-width:52ch; opacity:.82; }
+
+  /* 行単位のテキストリビール(SplitText風)。各 .rl は初期状態で下に沈めて透明にしておく */
+  .rl{ display:inline-block; overflow:hidden; }
+  .rl > span{
+    display:inline-block;
+    transform:translateY(110%);
+    transition:transform .7s var(--ease);
+    transition-delay:var(--d, 0ms);
+  }
+  .rl.in > span{ transform:translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">MERSI 風 デモ</span>
+  <nav class="sans logo-mark">Editorial Interaction Study</nav>
+</header>
+
+<section class="intro">
+  <span class="eyebrow sans">Reference: MERSI Architecture（Awwwards SOTD / FWA FOTD / CSSDA WOTD）</span>
+  <h1>紙の本のように<br>指先でめくって開く、<br>建築のポートフォリオ。</h1>
+</section>
+
+<div class="project-grid" id="grid"></div>
+
+<div id="hover-label" class="sans">View</div>
+<div id="overlay-root"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ==================================================================
+   * データ(デモ用に書き下ろしたオリジナルの架空プロジェクト)
+   * ================================================================== */
+  const PROJECTS = [
+    {
+      tint: '#B7A98C', num: '01',
+      title: 'Maison de Verre',
+      meta: 'Résidence privée — Paris, 2025',
+      lead: ['静けさの中に、', '建築の輪郭だけを残す。'],
+      body: [
+        ['ガラスと石灰石だけで構成された住宅は、', '装飾を削ぎ落とすことで光そのものを主役にした。'],
+        ['季節ごとに変化する陰影が、', '住まいの中に一年分の時間を編み込んでいく。'],
+      ],
+    },
+    {
+      tint: '#8D9A8B', num: '02',
+      title: 'Atelier Lumière',
+      meta: 'Studio Conversion — Lyon, 2024',
+      lead: ['旧工房を、', '光を編集する場所へ変える。'],
+      body: [
+        ['天井高を活かした大きな開口部が、', '一日の中で幾度も表情を変える内観をつくる。'],
+        ['素材はできる限り現地のものを再利用し、', '記憶ごと空間を継承した。'],
+      ],
+    },
+    {
+      tint: '#A98C79', num: '03',
+      title: 'Cour Intérieure',
+      meta: 'Courtyard House — Bordeaux, 2024',
+      lead: ['中庭を囲うように、', '暮らしを内側へ折り込む。'],
+      body: [
+        ['外部からの視線を遮りながら、', '空へ向けては大きく開く構成。'],
+        ['中庭は居間の延長として、', '四季の air をそのまま招き入れる。'],
+      ],
+    },
+    {
+      tint: '#6E7A85', num: '04',
+      title: 'Loft du Marais',
+      meta: 'Interior Renovation — Paris, 2023',
+      lead: ['歴史ある骨格に、', '静かな現代性を重ねる。'],
+      body: [
+        ['築100年の梁組をそのまま残し、', '新しい生活の層だけを上に重ねた。'],
+        ['家具や建具の比率を細かく調整し、', '空間全体の呼吸を整えている。'],
+      ],
+    },
+    {
+      tint: '#9C8060', num: '05',
+      title: 'Villa Ombre',
+      meta: 'Weekend House — Provence, 2023',
+      lead: ['陰影そのものを、', '設計する。'],
+      body: [
+        ['深い庇と細いルーバーが、', '一日中変化する光の帯を室内へ運ぶ。'],
+        ['素材の質感を最小限に絞ることで、', '光と影の対比だけが際立つ。'],
+      ],
+    },
+    {
+      tint: '#7F6F63', num: '06',
+      title: 'Duplex Nord',
+      meta: 'Apartment — Lille, 2022',
+      lead: ['狭さを、', '奥行きに変換する。'],
+      body: [
+        ['吹き抜けと折れた階段が、', '限られた面積の中に視線の抜けをつくる。'],
+        ['上下階のマテリアルを緩やかに切り替え、', '登るごとに空気が変わる住まいにした。'],
+      ],
+    },
+  ];
+
+  const grid = document.getElementById('grid');
+  const overlayRoot = document.getElementById('overlay-root');
+
+  /* ------------------------------------------------------------------
+   * 行単位テキストの組み立て(著者側で改行位置を決め、<span class="rl"><span>…</span></span> にラップ)
+   * これが GSAP の SplitText プラグインの「行分割 + マスク + 個別アニメーション」を
+   * 手作業(あらかじめ改行位置を決めておく)で簡易再現したもの。
+   * ------------------------------------------------------------------ */
+  function buildLines(tag, lines, extraClass = '') {
+    const el = document.createElement(tag);
+    if (extraClass) el.className = extraClass;
+    lines.forEach((line, i) => {
+      const wrap = document.createElement('span');
+      wrap.className = 'rl';
+      const inner = document.createElement('span');
+      inner.textContent = line;
+      wrap.style.setProperty('--d', `${i * 70}ms`);
+      wrap.appendChild(inner);
+      el.appendChild(wrap);
+      if (i < lines.length - 1) el.appendChild(document.createElement('br'));
+    });
+    return el;
+  }
+
+  /**
+   * revealLines(root)
+   * ----------------------------------------------
+   * root 内の .rl をすべて .in にして、下に沈めていたテキストを
+   * transition-delay(--d) の分だけ順番にせり上げて表示する。
+   * 他のプロジェクトでも「行を .rl でラップしておいて呼ぶだけ」で使い回せる。
+   */
+  function revealLines(root) {
+    root.querySelectorAll('.rl').forEach(el => el.classList.add('in'));
+  }
+  function hideLines(root) {
+    root.querySelectorAll('.rl').forEach(el => el.classList.remove('in'));
+  }
+
+  /* ------------------------------------------------------------------
+   * グリッドの描画
+   * ------------------------------------------------------------------ */
+  PROJECTS.forEach((p, i) => {
+    const card = document.createElement('article');
+    card.className = 'project-card';
+    card.style.setProperty('--tint', p.tint);
+    card.dataset.index = i;
+    card.innerHTML = `
+      <div class="card-media"><span class="card-num sans">${p.num}</span></div>
+      <h3 class="card-title">${p.title}</h3>
+      <p class="card-meta sans">${p.meta}</p>
+    `;
+    card.addEventListener('click', () => openProject(i, card));
+    grid.appendChild(card);
+  });
+
+  /* ==================================================================
+   * FLIP による「表紙をめくって開く」ページトランジション
+   *
+   * 考え方(GSAP Flip プラグインと同じ発想を素のJSで書いたもの):
+   *   1) First  … 開く前の状態を記録する(ここではカードの getBoundingClientRect)
+   *   2) Last   … 最終状態(全画面)のレイアウトを先に確定させる
+   *   3) Invert … 最終状態の要素に、Firstの見た目に一致するtransformを
+   *               「transition:noneで」一旦かけて、見た目上は何も動いていないようにする
+   *   4) Play   … 次のフレームでtransformをidentity(初期値)へアニメーションさせると、
+   *               要素がカードの位置・大きさから全画面へ滑らかに"育つ"ように見える
+   * ================================================================== */
+  let activeCard = null;
+
+  function buildDetail(p) {
+    const page = document.createElement('div');
+    page.className = 'detail-page';
+    const inner = document.createElement('div');
+    inner.className = 'detail-inner';
+
+    const closeBar = document.createElement('div');
+    closeBar.className = 'detail-close';
+    closeBar.innerHTML = `<button class="sans" type="button">Close ✕</button>`;
+    closeBar.querySelector('button').addEventListener('click', closeProject);
+    page.appendChild(closeBar);
+
+    const media = document.createElement('div');
+    media.className = 'detail-media';
+    media.style.background = `linear-gradient(160deg, color-mix(in srgb, ${p.tint} 55%, white), ${p.tint})`;
+    inner.appendChild(media);
+
+    const eyebrow = document.createElement('p');
+    eyebrow.className = 'detail-eyebrow sans';
+    eyebrow.textContent = p.meta;
+    inner.appendChild(eyebrow);
+
+    inner.appendChild(buildLines('h2', [p.title], 'detail-title'));
+    inner.appendChild(buildLines('p', p.lead, 'detail-lead'));
+
+    const body = document.createElement('div');
+    body.className = 'detail-body';
+    p.body.forEach(lines => body.appendChild(buildLines('p', lines)));
+    inner.appendChild(body);
+
+    page.appendChild(inner);
+    return page;
+  }
+
+  function openProject(index, cardEl) {
+    if (activeCard) return; // 二重オープン防止
+    activeCard = cardEl;
+
+    const firstRect = cardEl.getBoundingClientRect(); // 1) First
+
+    const page = buildDetail(PROJECTS[index]);
+    page.style.perspective = '1400px'; // ※ 子要素に3D回転をかけるための遠近感
+    overlayRoot.appendChild(page);
+    cardEl.style.visibility = 'hidden'; // グリッド側のカードは一旦隠す(位置はそのまま保持)
+
+    const lastRect = page.getBoundingClientRect(); // 2) Last(全画面)
+
+    const scaleX = firstRect.width / lastRect.width;
+    const scaleY = firstRect.height / lastRect.height;
+    const dx = firstRect.left - lastRect.left;
+    const dy = firstRect.top - lastRect.top;
+
+    page.style.transformOrigin = 'top left';
+    page.style.transition = 'none';
+    // 3) Invert: 全画面の要素に「カードの見た目」に一致するtransformを先にかける。
+    //    rotateY(8deg) を混ぜることで、開いた瞬間に紙が少し反り返るような
+    //    "ページをめくる"質感を加えている。
+    page.style.transform =
+      `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY}) rotateY(8deg)`;
+    page.style.borderRadius = '2px';
+
+    // 一度描画を強制してから、次のフレームでtransitionを有効化 → identityへアニメーション
+    page.getBoundingClientRect();
+    requestAnimationFrame(() => {
+      page.style.transition =
+        'transform .85s var(--ease), border-radius .85s var(--ease)';
+      page.style.transform = 'translate(0, 0) scale(1, 1) rotateY(0deg)';
+      page.style.borderRadius = '0px';
+    });
+
+    // 4) Play が概ね終わる頃合いでテキストの行リビールを開始
+    window.setTimeout(() => revealLines(page), 420);
+
+    history.pushState({ mersiDemoOpen: true }, '');
+  }
+
+  function closeProject() {
+    const page = overlayRoot.querySelector('.detail-page');
+    if (!page || !activeCard) return;
+
+    hideLines(page);
+
+    const targetRect = activeCard.getBoundingClientRect(); // 戻り先(カードの現在位置)
+    const currentRect = page.getBoundingClientRect();
+
+    const scaleX = targetRect.width / currentRect.width;
+    const scaleY = targetRect.height / currentRect.height;
+    const dx = targetRect.left - currentRect.left;
+    const dy = targetRect.top - currentRect.top;
+
+    page.style.transition =
+      'transform .6s var(--ease), border-radius .6s var(--ease), opacity .6s var(--ease)';
+    page.style.transformOrigin = 'top left';
+    page.style.transform =
+      `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY}) rotateY(-6deg)`;
+    page.style.borderRadius = '2px';
+    page.style.opacity = '0.4';
+
+    page.addEventListener('transitionend', () => {
+      page.remove();
+      activeCard.style.visibility = 'visible';
+      activeCard = null;
+    }, { once: true });
+  }
+
+  window.addEventListener('popstate', () => {
+    if (activeCard) closeProject();
+  });
+
+  /* ------------------------------------------------------------------
+   * カーソル追従の "View" ラベル(lerpで少し遅れて追従させ、質感を出す)
+   * ------------------------------------------------------------------ */
+  function initHoverLabel(labelEl, targets) {
+    let mx = 0, my = 0, lx = 0, ly = 0, visible = false;
+    window.addEventListener('mousemove', (e) => { mx = e.clientX; my = e.clientY; });
+    targets.forEach(el => {
+      el.addEventListener('mouseenter', () => { visible = true; labelEl.classList.add('is-visible'); });
+      el.addEventListener('mouseleave', () => { visible = false; labelEl.classList.remove('is-visible'); });
+    });
+    (function raf() {
+      lx += (mx - lx) * 0.18;
+      ly += (my - ly) * 0.18;
+      labelEl.style.transform = `translate3d(${lx}px, ${ly}px, 0) scale(${visible ? 1 : .4})`;
+      requestAnimationFrame(raf);
+    })();
+  }
+  initHoverLabel(document.getElementById('hover-label'), grid.querySelectorAll('.project-card'));
+})();
+</script>
+</body>
+</html>
