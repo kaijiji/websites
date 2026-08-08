@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PAINT REVEAL CORRIDOR — スケッチが色づく3D回廊 再現デモ</title>
+<meta name="description" content="Awwwards / FWA Site of the Day「ITom(Tomasz Szmajda)ポートフォリオ」の表現技法(手描きスケッチが近づくと着色されるシェーダー演出・歩いて進む3D回廊・慣性のあるカメラワーク)を学習目的でオリジナル再現したデモ" />
+<link rel="icon" href="data:," />
+<style>
+  :root {
+    --bg: #0b0a08;
+    --fg: #f4ede0;
+    --fg-dim: #9c9384;
+    --accent: #e8b04b;
+    --line: rgba(244, 237, 224, .14);
+    --ease: cubic-bezier(.16, 1, .3, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; overscroll-behavior: none; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Arial, sans-serif;
+    overflow: hidden;
+    cursor: none;
+  }
+
+  #stage { position: fixed; inset: 0; display: block; }
+
+  /* ============================================================
+     カスタムカーソル。実際のマウスカーソルは cursor:none で消し、
+     代わりにこの div をポインタ位置へ毎フレーム追従させる。
+     追従に「遅延(lerp)」を入れることで、対象サイトにあるような
+     少し重みのあるカーソルの質感を安価に再現できる。
+     ============================================================ */
+  #cursor {
+    position: fixed;
+    top: 0; left: 0;
+    width: 18px; height: 18px;
+    margin: -9px 0 0 -9px;
+    border-radius: 50%;
+    border: 1px solid var(--fg);
+    pointer-events: none;
+    z-index: 50;
+    transition: width .25s var(--ease), height .25s var(--ease), margin .25s var(--ease), border-color .25s var(--ease), background .25s var(--ease);
+  }
+  #cursor.is-near {
+    width: 46px; height: 46px; margin: -23px 0 0 -23px;
+    border-color: var(--accent);
+    background: rgba(232, 176, 75, .12);
+  }
+
+  .overlay {
+    position: fixed; inset: 0; z-index: 20; pointer-events: none;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: clamp(20px, 4vw, 48px);
+  }
+  .intro {
+    position: fixed; inset: 0; z-index: 30;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; gap: 14px; padding: 24px;
+    background: radial-gradient(ellipse at 50% 40%, rgba(20,17,12,.4), var(--bg) 78%);
+    transition: opacity 1s var(--ease), visibility 1s;
+  }
+  .intro.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  .intro h1 { margin: 0; font-size: clamp(22px, 4vw, 34px); font-weight: 600; letter-spacing: .02em; }
+  .intro p { margin: 0; color: var(--fg-dim); max-width: 40em; line-height: 1.8; font-size: 14px; }
+  .intro .hint { margin-top: 18px; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); animation: pulse 1.8s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
+
+  .hud-top { display: flex; justify-content: space-between; align-items: flex-start; font-size: 11px; letter-spacing: .1em; color: var(--fg-dim); text-transform: uppercase; }
+  .hud-top span { display: block; }
+  .hud-top strong { color: var(--fg); font-weight: 500; }
+
+  #progress-track { position: relative; height: 2px; background: var(--line); width: 100%; }
+  #progress-fill { position: absolute; inset: 0 auto 0 0; width: 0%; background: var(--accent); }
+
+  a.source-link { pointer-events: auto; color: var(--fg); text-decoration: none; border-bottom: 1px solid var(--accent); }
+</style>
+</head>
+<body>
+
+<canvas id="stage"></canvas>
+<div id="cursor"></div>
+
+<div class="overlay">
+  <div class="hud-top">
+    <span><strong>PAINT REVEAL CORRIDOR</strong><br>学習用オリジナル再現デモ</span>
+    <span style="text-align:right">スクロール / ドラッグ / ↑↓キーで進む<br><a class="source-link" href="https://itomdev.com/" target="_blank" rel="noopener">参照元: itomdev.com ↗</a></span>
+  </div>
+  <div id="progress-track"><div id="progress-fill"></div></div>
+</div>
+
+<div class="intro" id="intro">
+  <h1>スケッチの回廊を歩く</h1>
+  <p>
+    壁にかかった額は、最初はただの鉛筆スケッチ。近づくと、シェーダーが少しずつ絵の具で塗るように色づいていきます。
+    スクロールで回廊の奥へ進んでみてください。
+  </p>
+  <div class="hint">Scroll to begin</div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+<script type="module">
+import * as THREE from "three";
+
+/* ============================================================
+   0. 決定論的な疑似乱数 & 手描き風アートワークの生成
+   ------------------------------------------------------------
+   対象サイトの実際のイラスト・写真は一切使わず、シード値から
+   毎回同じ構図を再現できる「線形合同法」の乱数でアブストラクトな
+   構図を組み立て、それを (1) 鉛筆スケッチ風、(2) 着色版、の
+   2枚のキャンバステクスチャとして描き分けている。
+   同じ座標データを流用して2枚を描くことで、シェーダーでブレンド
+   したときに輪郭がぴったり一致する。
+   ============================================================ */
+function seededRandom(seed) {
+  let s = (seed % 2147483647 + 2147483647) % 2147483647 || 1;
+  return function () {
+    s = (s * 16807) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+
+const PALETTES = [
+  ["#e8b04b", "#c4522a", "#3a2418"],
+  ["#5fb1a6", "#2c5f6b", "#132226"],
+  ["#c96b8a", "#6a2c52", "#241023"],
+  ["#8fb14b", "#3f6b2c", "#182410"],
+  ["#6f8fe8", "#2c4a6b", "#0f1a24"],
+];
+
+// シード値から「有機的な輪郭を持つブロブ形状」を複数個 + 数本の走り線を持つ
+// 構図データを組み立てる。ここでは座標のみを決め、描画はしない。
+function buildComposition(seed) {
+  const rand = seededRandom(seed);
+  const blobCount = 3 + Math.floor(rand() * 3);
+  const blobs = [];
+  for (let i = 0; i < blobCount; i++) {
+    const cx = 0.2 + rand() * 0.6;
+    const cy = 0.2 + rand() * 0.6;
+    const baseR = 0.08 + rand() * 0.16;
+    const pointCount = 7 + Math.floor(rand() * 4);
+    const points = [];
+    for (let p = 0; p < pointCount; p++) {
+      const a = (p / pointCount) * Math.PI * 2;
+      const r = baseR * (0.7 + rand() * 0.6);
+      points.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.85]);
+    }
+    blobs.push({ points });
+  }
+  const strokes = [];
+  const strokeCount = 4 + Math.floor(rand() * 4);
+  for (let i = 0; i < strokeCount; i++) {
+    strokes.push({
+      x1: rand(), y1: rand(), x2: rand(), y2: rand(),
+      bow: (rand() - 0.5) * 0.3,
+    });
+  }
+  return { blobs, strokes, palette: PALETTES[seed % PALETTES.length], rand };
+}
+
+function smoothClosedPath(ctx, points, w, h) {
+  ctx.beginPath();
+  const n = points.length;
+  for (let i = 0; i <= n; i++) {
+    const [x0, y0] = points[i % n];
+    const [x1, y1] = points[(i + 1) % n];
+    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+    if (i === 0) ctx.moveTo(mx * w, my * h);
+    else ctx.quadraticCurveTo(x0 * w, y0 * h, mx * w, my * h);
+  }
+  ctx.closePath();
+}
+
+function drawSketchTexture(comp, w, h) {
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#efe6d4";
+  ctx.fillRect(0, 0, w, h);
+  // 紙の質感: ランダムな薄い斑点
+  const paperRand = seededRandom(99);
+  ctx.fillStyle = "rgba(120,105,80,0.05)";
+  for (let i = 0; i < 900; i++) {
+    ctx.fillRect(paperRand() * w, paperRand() * h, 1.5, 1.5);
+  }
+  ctx.strokeStyle = "rgba(40,30,20,0.55)";
+  ctx.lineWidth = 1.4;
+  comp.blobs.forEach((b) => {
+    smoothClosedPath(ctx, b.points, w, h);
+    ctx.stroke();
+    // ブロブ内部にクロスハッチ(斜線の影)を入れて鉛筆画らしさを出す
+    ctx.save();
+    ctx.clip();
+    ctx.strokeStyle = "rgba(40,30,20,0.28)";
+    ctx.lineWidth = 1;
+    const bbox = b.points.reduce((acc, [x, y]) => ({
+      minX: Math.min(acc.minX, x), maxX: Math.max(acc.maxX, x),
+      minY: Math.min(acc.minY, y), maxY: Math.max(acc.maxY, y),
+    }), { minX: 1, maxX: 0, minY: 1, maxY: 0 });
+    for (let y = bbox.minY * h; y < bbox.maxY * h; y += 5) {
+      ctx.beginPath();
+      ctx.moveTo(bbox.minX * w, y);
+      ctx.lineTo(bbox.maxX * w, y + (bbox.maxX - bbox.minX) * w * 0.3);
+      ctx.stroke();
+    }
+    ctx.restore();
+  });
+  comp.strokes.forEach((s) => {
+    ctx.beginPath();
+    ctx.moveTo(s.x1 * w, s.y1 * h);
+    const mx = (s.x1 + s.x2) / 2 + s.bow, my = (s.y1 + s.y2) / 2 + s.bow;
+    ctx.quadraticCurveTo(mx * w, my * h, s.x2 * w, s.y2 * h);
+    ctx.stroke();
+  });
+  return canvas;
+}
+
+function drawColorTexture(comp, w, h) {
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  const [c1, c2, c3] = comp.palette;
+  const bg = ctx.createLinearGradient(0, 0, w, h);
+  bg.addColorStop(0, c3); bg.addColorStop(1, c2);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  comp.blobs.forEach((b, i) => {
+    smoothClosedPath(ctx, b.points, w, h);
+    const cx = b.points.reduce((s, p) => s + p[0], 0) / b.points.length * w;
+    const cy = b.points.reduce((s, p) => s + p[1], 0) / b.points.length * h;
+    const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, w * 0.22);
+    grad.addColorStop(0, i % 2 === 0 ? c1 : c2);
+    grad.addColorStop(1, c3);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  });
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 1;
+  comp.strokes.forEach((s) => {
+    ctx.beginPath();
+    ctx.moveTo(s.x1 * w, s.y1 * h);
+    const mx = (s.x1 + s.x2) / 2 + s.bow, my = (s.y1 + s.y2) / 2 + s.bow;
+    ctx.quadraticCurveTo(mx * w, my * h, s.x2 * w, s.y2 * h);
+    ctx.stroke();
+  });
+  return canvas;
+}
+
+/* ============================================================
+   1. PaintRevealMaterial 相当のシェーダー
+   ------------------------------------------------------------
+   uReveal を 0→1.3 に増やすと、額の中心から円形に
+   「スケッチ→着色版」へ塗り広がっていく。円の境界には
+   ハッシュノイズで細かいギザギザを付け、絵筆で塗ったような
+   有機的なエッジにしている(完全な真円だと機械的に見えるため)。
+   ============================================================ */
+const paintRevealVertex = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const paintRevealFragment = `
+  precision highp float;
+  varying vec2 vUv;
+  uniform sampler2D uSketch;
+  uniform sampler2D uColor;
+  uniform float uReveal;
+
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  }
+
+  void main() {
+    vec3 sketch = texture2D(uSketch, vUv).rgb;
+    vec3 color = texture2D(uColor, vUv).rgb;
+
+    vec2 center = vec2(0.5, 0.46);
+    float dist = distance(vUv, center);
+    float edgeNoise = (hash(floor(vUv * 48.0)) - 0.5) * 0.05;
+    float mask = smoothstep(0.02, -0.02, dist - uReveal + edgeNoise);
+
+    vec3 col = mix(sketch, color, mask);
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+function createFrameMesh(seed, width = 2.0, height = 2.6) {
+  const comp = buildComposition(seed);
+  const sketchCanvas = drawSketchTexture(comp, 512, 640);
+  const colorCanvas = drawColorTexture(comp, 512, 640);
+  const sketchTex = new THREE.CanvasTexture(sketchCanvas);
+  const colorTex = new THREE.CanvasTexture(colorCanvas);
+  sketchTex.colorSpace = THREE.SRGBColorSpace;
+  colorTex.colorSpace = THREE.SRGBColorSpace;
+
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uSketch: { value: sketchTex },
+      uColor: { value: colorTex },
+      uReveal: { value: 0 },
+    },
+    vertexShader: paintRevealVertex,
+    fragmentShader: paintRevealFragment,
+  });
+
+  const art = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
+
+  // 額縁(マット): アート面より一回り大きい板を背後に置くだけの簡易フレーム
+  const matte = new THREE.Mesh(
+    new THREE.PlaneGeometry(width + 0.24, height + 0.24),
+    new THREE.MeshStandardMaterial({ color: 0x1c150e, roughness: 0.8 })
+  );
+  matte.position.z = -0.02;
+
+  const group = new THREE.Group();
+  group.add(matte, art);
+  group.userData.material = material;
+  return group;
+}
+
+/* ============================================================
+   2. シーン構築: 回廊(コリドー)
+   ------------------------------------------------------------
+   額を左右の壁に交互に配置し、Z軸方向に並べる。
+   カメラはZ軸に沿ってドリー(前後移動)するだけのシンプルな
+   構成だが、フォグと点光源で「奥がだんだん見えてくる」
+   ギャラリーらしい奥行きを作っている。
+   ============================================================ */
+const canvas = document.getElementById("stage");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0b0a08, 0.045);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 0.2, 2);
+
+scene.add(new THREE.AmbientLight(0x554430, 0.7));
+
+// 床: 単色 + わずかな反射感のみ(重い鏡面反射は使わずライトなシーンに留める)
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(10, 100),
+  new THREE.MeshStandardMaterial({ color: 0x14100a, roughness: 0.9 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.position.set(0, -1.4, -40);
+scene.add(floor);
+
+const FRAME_COUNT = 9;
+const SPACING = 7;
+const frames = [];
+for (let i = 0; i < FRAME_COUNT; i++) {
+  const side = i % 2 === 0 ? -1 : 1; // 交互に左右の壁へ
+  const group = createFrameMesh(i * 17 + 3);
+  group.position.set(side * 2.6, 0.1, -6 - i * SPACING);
+  group.rotation.y = -side * (Math.PI / 2 - 0.18); // 通路の中心をわずかに向く角度(法線を室内側へ)
+  scene.add(group);
+
+  const light = new THREE.PointLight(0xfff1d6, 6, 8, 2);
+  light.position.set(side * 1.6, 1.3, group.position.z + 0.6);
+  scene.add(light);
+
+  frames.push({ group, z: group.position.z, revealed: 0, triggered: false });
+}
+
+/* ============================================================
+   3. スクロール/ドラッグ入力 → カメラのドリー移動
+   ------------------------------------------------------------
+   ホイール量やドラッグ量を scrollTarget に積算し、実際の
+   camera.position.z は毎フレーム lerp で追いかけさせている。
+   「入力値を即座に反映しない」ことで、対象サイトのような
+   少し重みのある慣性スクロールの質感になる。
+   ============================================================ */
+const maxScroll = (FRAME_COUNT - 1) * SPACING + 8;
+let scrollTarget = 0;
+let scrollCurrent = 0;
+let started = false;
+
+function bumpScroll(delta) {
+  scrollTarget = Math.min(maxScroll, Math.max(0, scrollTarget + delta));
+  if (!started && scrollTarget > 0.5) {
+    started = true;
+    document.getElementById("intro").classList.add("hidden");
+  }
+}
+
+addEventListener("wheel", (e) => bumpScroll(e.deltaY * 0.02), { passive: true });
+
+let dragActive = false, dragLastY = 0;
+addEventListener("pointerdown", (e) => { dragActive = true; dragLastY = e.clientY; });
+addEventListener("pointerup", () => { dragActive = false; });
+addEventListener("pointermove", (e) => {
+  if (dragActive) bumpScroll((dragLastY - e.clientY) * 0.03);
+  dragLastY = e.clientY;
+  mouseNormX = (e.clientX / innerWidth) * 2 - 1;
+  mouseNormY = (e.clientY / innerHeight) * 2 - 1;
+  cursorTargetX = e.clientX; cursorTargetY = e.clientY;
+});
+addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") bumpScroll(2.4);
+  if (e.key === "ArrowUp") bumpScroll(-2.4);
+});
+
+let mouseNormX = 0, mouseNormY = 0;
+let cursorTargetX = innerWidth / 2, cursorTargetY = innerHeight / 2;
+let cursorX = cursorTargetX, cursorY = cursorTargetY;
+const cursorEl = document.getElementById("cursor");
+const progressFill = document.getElementById("progress-fill");
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ============================================================
+   4. メインループ
+   ============================================================ */
+const TRIGGER_DIST = 6.5;
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  scrollCurrent += (scrollTarget - scrollCurrent) * Math.min(1, dt * 4);
+  camera.position.z = 2 - scrollCurrent;
+
+  // マウスに応じたごくわずかな視線パララックス(見回す感覚)
+  camera.rotation.y += ((-mouseNormX * 0.12) - camera.rotation.y) * Math.min(1, dt * 3);
+  camera.position.y += ((0.2 - mouseNormY * 0.15) - camera.position.y) * Math.min(1, dt * 3);
+
+  let nearAny = false;
+  frames.forEach((f) => {
+    const dist = Math.abs(camera.position.z - f.z);
+    if (dist < TRIGGER_DIST) {
+      f.triggered = true;
+      if (dist < TRIGGER_DIST * 0.5) nearAny = true;
+    }
+    const target = f.triggered ? 1.3 : 0;
+    f.revealed += (target - f.revealed) * Math.min(1, dt * 1.8);
+    f.group.userData.material.uniforms.uReveal.value = f.revealed;
+  });
+
+  cursorX += (cursorTargetX - cursorX) * Math.min(1, dt * 12);
+  cursorY += (cursorTargetY - cursorY) * Math.min(1, dt * 12);
+  cursorEl.style.transform = `translate(${cursorX}px, ${cursorY}px)`;
+  cursorEl.classList.toggle("is-near", nearAny);
+
+  progressFill.style.width = `${(scrollCurrent / maxScroll) * 100}%`;
+
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
