@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MONOLITH REVEAL — 光で浮かび上がる3Dモノリス × 反射する床 再現デモ</title>
+<meta name="description" content="Awwwards Site of the Day「Hubtown」(制作: Unseen Studio)の表現技法(単一の3Dオブジェクトによるヒーロー演出・カーソル追従のリベールライティング・反射する床・スクロール連動カメラワーク)を学習目的でオリジナル再現したデモ" />
+<style>
+  :root {
+    --bg: #030305;
+    --panel: rgba(8, 9, 16, .72);
+    --fg: #eef1fb;
+    --fg-dim: #8b90a8;
+    --accent: #6fa8ff;
+    --accent-warm: #ff8a5b;
+    --line: rgba(238, 241, 251, .1);
+    --ease: cubic-bezier(.16, 1, .3, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Arial, sans-serif;
+    overflow-x: hidden;
+  }
+  a { color: inherit; }
+  ::selection { background: var(--accent); color: #04070f; }
+
+  /* ============================================================
+     0. 背景の3Dキャンバス
+     position: fixed でビューポート全体に固定し、その手前を
+     通常のドキュメントフローでスクロールさせることで、
+     「背景の3Dシーンは固定、文字だけが流れていく」定番構成にしている。
+     ============================================================ */
+  #webgl-hero {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+    z-index: 0;
+  }
+
+  /* 3Dシーンが必要な区間(ヒーロー+ストーリー)の高さを確保するスペーサー。
+     この区間をスクロールしている間だけ #webgl-hero が見えている。 */
+  #scene-spacer { position: relative; height: 340vh; z-index: 1; pointer-events: none; }
+
+  main { position: relative; z-index: 1; }
+
+  /* ============================================================
+     1. ヒーローセクション
+     ============================================================ */
+  .hero {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    pointer-events: none;
+  }
+  .hero .eyebrow {
+    font-size: .78rem;
+    letter-spacing: .35em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 1.1rem;
+  }
+  .hero h1 {
+    font-size: clamp(2.4rem, 7vw, 5.4rem);
+    line-height: 1.02;
+    margin: 0 0 1rem;
+    font-weight: 700;
+    letter-spacing: -.02em;
+    text-shadow: 0 0 40px rgba(111, 168, 255, .25);
+  }
+  .hero p {
+    max-width: 34em;
+    margin: 0 auto;
+    color: var(--fg-dim);
+    font-size: 1.02rem;
+  }
+  .hero .scroll-cue {
+    position: absolute;
+    bottom: 2.4rem;
+    font-size: .72rem;
+    letter-spacing: .3em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+    opacity: .8;
+    animation: bob 2.2s ease-in-out infinite;
+  }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(8px); } }
+
+  /* ============================================================
+     2. ストーリーテリング(スクロール連動のテキストパネル)
+     ============================================================ */
+  .story-slot {
+    height: 113vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 1.5rem;
+  }
+  .story-card {
+    max-width: 30em;
+    padding: 2.2rem 2.4rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    opacity: 0;
+    transform: translateY(28px);
+    transition: opacity .9s var(--ease), transform .9s var(--ease);
+  }
+  .story-card.is-visible { opacity: 1; transform: translateY(0); }
+  .story-card .num {
+    display: inline-block;
+    font-size: .75rem;
+    letter-spacing: .25em;
+    color: var(--accent);
+    margin-bottom: .8rem;
+  }
+  .story-card h2 { margin: 0 0 .7rem; font-size: 1.7rem; }
+  .story-card p { margin: 0; color: var(--fg-dim); line-height: 1.75; }
+
+  /* ============================================================
+     3. マップ風セクション(架空のポートフォリオ探索UI)
+     実在の地図・実在の物件データは一切使用せず、
+     抽象的なグリッド上にダミーのピンを配置しているだけ。
+     ============================================================ */
+  .map-section {
+    position: relative;
+    min-height: 100vh;
+    padding: 8rem 1.5rem 10rem;
+    background:
+      radial-gradient(ellipse at 50% 0%, rgba(111,168,255,.08), transparent 60%),
+      var(--bg);
+  }
+  .map-section .head { text-align: center; max-width: 34em; margin: 0 auto 4rem; }
+  .map-section .head .num { color: var(--accent); font-size: .75rem; letter-spacing: .25em; }
+  .map-section .head h2 { font-size: clamp(1.8rem, 4vw, 2.6rem); margin: .6rem 0; }
+  .map-section .head p { color: var(--fg-dim); }
+
+  .map-grid {
+    position: relative;
+    max-width: 900px;
+    margin: 0 auto;
+    aspect-ratio: 16 / 9;
+    background:
+      linear-gradient(rgba(238,241,251,.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(238,241,251,.06) 1px, transparent 1px);
+    background-size: 40px 40px;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    overflow: hidden;
+  }
+  .pin {
+    position: absolute;
+    width: 14px; height: 14px;
+    margin: -7px 0 0 -7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 0 rgba(111,168,255,.5);
+    cursor: pointer;
+    opacity: 0;
+    transform: scale(.3);
+    transition: opacity .6s var(--ease), transform .6s var(--ease);
+  }
+  .pin.is-visible {
+    opacity: 1;
+    transform: scale(1);
+    animation: pulse 2.6s ease-out infinite;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(111,168,255,.45); }
+    70%  { box-shadow: 0 0 0 16px rgba(111,168,255,0); }
+    100% { box-shadow: 0 0 0 0 rgba(111,168,255,0); }
+  }
+  .pin::after {
+    content: attr(data-label);
+    position: absolute;
+    left: 50%;
+    bottom: 130%;
+    transform: translateX(-50%) translateY(6px);
+    white-space: nowrap;
+    background: #0a0c16;
+    border: 1px solid var(--line);
+    padding: .4rem .7rem;
+    border-radius: 8px;
+    font-size: .78rem;
+    color: var(--fg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s var(--ease), transform .25s var(--ease);
+  }
+  .pin:hover::after { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .pin:hover { background: var(--accent-warm); }
+
+  footer {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 3rem 1.5rem 4rem;
+    color: var(--fg-dim);
+    font-size: .82rem;
+  }
+  footer a { color: var(--accent); }
+
+  @media (max-width: 640px) {
+    #scene-spacer { height: 300vh; }
+    .story-slot { height: 100vh; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="webgl-hero"></canvas>
+
+<div id="scene-spacer">
+  <section class="hero">
+    <p class="eyebrow">Original demo — inspired by an Awwwards Site of the Day</p>
+    <h1>1つのオブジェクトに<br>重さと光を宿す</h1>
+    <p>マウスを動かして、暗闇に浮かぶモノリスに光を当ててみてください。スクロールすると、カメラがゆっくりと周囲を巡りはじめます。</p>
+    <span class="scroll-cue">SCROLL ↓</span>
+  </section>
+
+  <div class="story-slot">
+    <article class="story-card" data-reveal>
+      <span class="num">01 / 03</span>
+      <h2>単一のオブジェクトで語る</h2>
+      <p>複雑なシーンを作り込む代わりに、たった1つの3Dオブジェクトに慣性・陰影・光の反応を丁寧に積み上げることで、少ないポリゴンでも「作り込まれている」と感じさせることができます。</p>
+    </article>
+  </div>
+  <div class="story-slot">
+    <article class="story-card" data-reveal>
+      <span class="num">02 / 03</span>
+      <h2>光は追いかけると生きる</h2>
+      <p>カーソルの位置に追従する光源は、画面のどこを見せて、どこを闇に沈めるかをユーザー自身に委ねます。触れるたびに違う表情が見える、というだけで没入感が生まれます。</p>
+    </article>
+  </div>
+  <div class="story-slot">
+    <article class="story-card" data-reveal>
+      <span class="num">03 / 03</span>
+      <h2>足元の反射が世界を広げる</h2>
+      <p>床に映り込む反転した像は、シーンの物理的な奥行きと重さを一気に増幅させます。実装コストは小さくても、体感される情報量はとても大きい演出です。</p>
+    </article>
+  </div>
+</div>
+
+<main>
+  <section class="map-section">
+    <div class="head">
+      <span class="num">EXPLORE</span>
+      <h2>物語から、探索するUIへ</h2>
+      <p>スクロールで没入体験を見せたあと、最後は探索型のグリッドUIに切り替える構成もよく使われます。ここではダミーの地点データでその「切り替わり」の感覚だけを再現しています。</p>
+    </div>
+    <div class="map-grid" id="mapGrid"></div>
+  </section>
+
+  <footer>
+    <p>
+      本デモは学習目的のオリジナル実装です。参照元: Awwwards Site of the Day「Hubtown」(制作: Unseen Studio) —
+      <a href="https://www.awwwards.com/sites/hubtown" target="_blank" rel="noopener">awwwards.com/sites/hubtown</a>
+      / 対象サイト: <a href="https://hubtown.co.in/" target="_blank" rel="noopener">hubtown.co.in</a>。
+      詳しい解説は同じフォルダの README.md を参照してください。
+    </p>
+  </footer>
+</main>
+
+<!--
+  ============================================================
+  学習用オリジナル再現デモ:「光で浮かび上がる3Dモノリス」
+  ============================================================
+  このファイルは Hubtown (制作: Unseen Studio) の実際のソースコードでは
+  ありません。検索で得られた受賞ページ情報・紹介記事の要約から読み取った
+  「表現の仕組み」(単一の3Dオブジェクトによるヒーロー演出・カーソル追従の
+  リベールライティング・反射する床・スクロール連動カメラワーク)を理解した
+  上で、ゼロから書いたオリジナルのコードです。
+
+  詳しい解説は同じフォルダの README.md を参照してください。
+  ============================================================
+-->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+
+/* ------------------------------------------------------------------
+ * 1. createMonolithScene(canvas)
+ *    「暗闇に浮かぶ、光で表情を変える1つのオブジェクト」を作る関数。
+ *    他のプロジェクトでも canvas 要素を渡すだけで使い回せるように
+ *    小さなAPI ({ setPointer, setScrollProgress, setActive, resize }) を
+ *    返す形にまとめている。
+ * ------------------------------------------------------------------ */
+function createMonolithScene(canvas) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x030305);
+  scene.fog = new THREE.FogExp2(0x030305, 0.05);
+
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+  camera.position.set(0, 1.5, 8);
+
+  /* --- モノリス本体 -------------------------------------------------
+     detail=0 の IcosahedronGeometry を縦に引き伸ばすと、面取りされた
+     結晶(クリスタル)のような、少ないポリゴンでも表情豊かな形になる。
+     flatShading を有効にすることで、面ごとの陰影がくっきり出て
+     ライトの動きに敏感に反応するようになる。 */
+  const monolithGeo = new THREE.IcosahedronGeometry(1.5, 0);
+  monolithGeo.scale(0.6, 1.6, 0.6);
+  const monolithMat = new THREE.MeshStandardMaterial({
+    color: 0x0a0a10,
+    metalness: 0.9,
+    roughness: 0.32,
+    flatShading: true,
+  });
+  const monolith = new THREE.Mesh(monolithGeo, monolithMat);
+  monolith.position.y = 1.0;
+  scene.add(monolith);
+
+  /* --- 疑似的な床反射 -------------------------------------------------
+     本格的な鏡面反射(レンダーターゲット+反転カメラ)は重く複雑になり
+     やすいので、学習用デモでは「モノリスをY軸で反転コピーし、半透明+
+     霧(fog)で滲ませる」という軽量な擬似反射で同じ雰囲気を再現している。
+     実プロダクトで本物の反射が欲しい場合は Three.js の Reflector 系の
+     実装(レンダーターゲットに反転カメラでシーンを描画し、床のマテリアル
+     にその結果をテクスチャとして貼る手法)を調べてみてください。 */
+  const reflection = monolith.clone();
+  reflection.material = monolithMat.clone();
+  reflection.material.transparent = true;
+  reflection.material.opacity = 0.25;
+  reflection.scale.y *= -1;
+  reflection.position.y = -1.0;
+  scene.add(reflection);
+
+  const floor = new THREE.Mesh(
+    new THREE.CircleGeometry(9, 64),
+    new THREE.MeshStandardMaterial({ color: 0x020203, metalness: 0.55, roughness: 0.4 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.02;
+  scene.add(floor);
+
+  /* --- ライティング ---------------------------------------------------
+     ・ambient / key はシーン全体をうっすら見せるための最低限の明かり
+     ・rim はモノリスの輪郭を常時ほんのり光らせる固定ライト
+     ・reveal がマウス座標に追従する「触れると光る」ためのライト */
+  scene.add(new THREE.AmbientLight(0x1a1c2e, 0.55));
+
+  const key = new THREE.DirectionalLight(0x8fa6ff, 0.3);
+  key.position.set(-3, 5, -2);
+  scene.add(key);
+
+  const rim = new THREE.PointLight(0xff7a4d, 0.9, 8, 2);
+  rim.position.set(2.6, 2.4, -1.6);
+  scene.add(rim);
+
+  const reveal = new THREE.PointLight(0x7fb4ff, 0, 9, 2);
+  reveal.position.set(0, 1.6, 3.2);
+  scene.add(reveal);
+
+  /* --- 状態管理用の変数 ------------------------------------------------ */
+  const pointer = { x: 0, y: 0, active: false };
+  const revealTarget = new THREE.Vector3(0, 1.6, 3.2);
+  let baseSpin = 0;
+  let rotY = 0, rotYTarget = 0;
+  let tiltX = 0, tiltXTarget = 0;
+  let scrollProgress = 0;
+  let active = true;
+  let raf = null;
+  const clock = new THREE.Clock();
+
+  function setPointer(nx, ny, isActive) {
+    pointer.x = nx;
+    pointer.y = ny;
+    pointer.active = isActive;
+    rotYTarget = nx * 0.6;
+    tiltXTarget = ny * 0.22;
+  }
+
+  function setScrollProgress(p) {
+    scrollProgress = Math.min(1, Math.max(0, p));
+  }
+
+  function setActive(isActive) {
+    active = isActive;
+    if (active && raf === null) {
+      clock.start();
+      raf = requestAnimationFrame(tick);
+    }
+    if (!active && raf !== null) {
+      cancelAnimationFrame(raf);
+      raf = null;
+    }
+  }
+
+  function resize() {
+    const w = canvas.clientWidth || window.innerWidth;
+    const h = canvas.clientHeight || window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+
+  function tick() {
+    raf = requestAnimationFrame(tick);
+    const dt = Math.min(clock.getDelta(), 1 / 30);
+
+    /* 慣性(inertia)を出すためのダンピング補間。
+       目標値へ一気に到達させず、毎フレーム差分の一部だけ近づけることで
+       「重さ」を感じる、遅れて追従する回転になる。 */
+    const damp = 1 - Math.pow(0.0025, dt);
+    rotY += (rotYTarget - rotY) * damp;
+    tiltX += (tiltXTarget - tiltX) * damp;
+    baseSpin += dt * 0.12;
+
+    monolith.rotation.y = baseSpin + rotY;
+    monolith.rotation.z = tiltX * 0.35;
+    reflection.rotation.y = monolith.rotation.y;
+    reflection.rotation.z = monolith.rotation.z;
+
+    /* マウス追従リベールライト: 対象位置へゆっくり寄せつつ、
+       マウスがキャンバス上にある間だけ強度を上げて「発見」させる */
+    revealTarget.set(pointer.x * 3.2, 1.2 + pointer.y * 1.6, 3.0);
+    reveal.position.lerp(revealTarget, 1 - Math.pow(0.001, dt));
+    const targetIntensity = pointer.active ? 2.6 : 0;
+    reveal.intensity += (targetIntensity - reveal.intensity) * (1 - Math.pow(0.02, dt));
+
+    /* スクロール連動のカメラドリー&オービット。
+       scrollProgress(0〜1)に応じてカメラをモノリスの周りへ半周させ、
+       同時に少しだけ寄っていくことで「巡りながら近づく」動きを作る。 */
+    const angle = scrollProgress * Math.PI * 0.6;
+    const radius = 8 - scrollProgress * 3.4;
+    camera.position.x = Math.sin(angle) * radius * 0.55;
+    camera.position.z = Math.cos(angle) * radius;
+    camera.position.y = 1.5 + scrollProgress * 1.1;
+    camera.lookAt(0, 1.0, 0);
+    scene.fog.density = 0.05 + scrollProgress * 0.015;
+
+    renderer.render(scene, camera);
+  }
+
+  resize();
+  window.addEventListener("resize", resize);
+  raf = requestAnimationFrame(tick);
+
+  return { setPointer, setScrollProgress, setActive, resize };
+}
+
+/* ------------------------------------------------------------------
+ * 2. 使い方
+ * ------------------------------------------------------------------ */
+const canvas = document.getElementById("webgl-hero");
+const scene3d = createMonolithScene(canvas);
+
+window.addEventListener("pointermove", (e) => {
+  const nx = (e.clientX / window.innerWidth) * 2 - 1;
+  const ny = -((e.clientY / window.innerHeight) * 2 - 1);
+  scene3d.setPointer(nx, ny, true);
+});
+window.addEventListener("pointerleave", () => scene3d.setPointer(0, 0, false));
+window.addEventListener("blur", () => scene3d.setPointer(0, 0, false));
+
+/* スクロール進捗(0〜1)を #scene-spacer の高さに対して計算し、
+   3Dシーンへ渡す。GSAPのScrollTriggerのような専用ライブラリを使わなくても、
+   scrollイベント + requestAnimationFrame の間引きだけで十分実用的に作れる。 */
+const spacer = document.getElementById("scene-spacer");
+let scrollTicking = false;
+function updateScrollProgress() {
+  scrollTicking = false;
+  const rect = spacer.getBoundingClientRect();
+  const total = rect.height - window.innerHeight;
+  const passed = -rect.top;
+  const progress = total > 0 ? passed / total : 0;
+  scene3d.setScrollProgress(progress);
+}
+window.addEventListener("scroll", () => {
+  if (!scrollTicking) {
+    scrollTicking = true;
+    requestAnimationFrame(updateScrollProgress);
+  }
+}, { passive: true });
+updateScrollProgress();
+
+/* 3Dシーンが画面外(マップセクションまでスクロールした後)にいる間は
+   レンダリングループを止めてGPU負荷を節約する。 */
+const io = new IntersectionObserver((entries) => {
+  entries.forEach((entry) => scene3d.setActive(entry.isIntersecting));
+}, { threshold: 0 });
+io.observe(spacer);
+
+/* ------------------------------------------------------------------
+ * 3. initScrollReveal()
+ *    data-reveal を付けた要素を、画面に入ったタイミングで
+ *    ふわっとフェードインさせる汎用関数。
+ * ------------------------------------------------------------------ */
+function initScrollReveal() {
+  const targets = document.querySelectorAll("[data-reveal]");
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) entry.target.classList.add("is-visible");
+    });
+  }, { threshold: 0.35 });
+  targets.forEach((el) => observer.observe(el));
+}
+initScrollReveal();
+
+/* ------------------------------------------------------------------
+ * 4. initExploreMap()
+ *    ストーリー演出のあとに現れる「探索UI」への切り替えを表現する
+ *    ダミーのピン付きグリッド。実在の地図・位置情報は使用していない。
+ * ------------------------------------------------------------------ */
+function initExploreMap() {
+  const grid = document.getElementById("mapGrid");
+  const points = [
+    { x: 18, y: 62, label: "Site A — 架空プロジェクト" },
+    { x: 34, y: 30, label: "Site B — 架空プロジェクト" },
+    { x: 52, y: 55, label: "Site C — 架空プロジェクト" },
+    { x: 66, y: 22, label: "Site D — 架空プロジェクト" },
+    { x: 78, y: 48, label: "Site E — 架空プロジェクト" },
+    { x: 46, y: 78, label: "Site F — 架空プロジェクト" },
+  ];
+  points.forEach((pt, i) => {
+    const pin = document.createElement("div");
+    pin.className = "pin";
+    pin.style.left = pt.x + "%";
+    pin.style.top = pt.y + "%";
+    pin.style.transitionDelay = (i * 90) + "ms";
+    pin.dataset.label = pt.label;
+    grid.appendChild(pin);
+  });
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        grid.querySelectorAll(".pin").forEach((p) => p.classList.add("is-visible"));
+        observer.disconnect();
+      }
+    });
+  }, { threshold: 0.2 });
+  observer.observe(grid);
+}
+initExploreMap();
+</script>
+</body>
+</html>
