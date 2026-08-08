@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SIX ALCOVES — スクロールで巡る3Dジュエリー展示室 再現デモ</title>
+<meta name="description" content="Awwwards Site of the Day「Cartier Watches &amp; Wonders 2026」(制作: Immersive Garden)の表現技法(スクロール連動で6つの3D展示室=アルコーブを巡る演出・水鏡風の反射床・ホバーで反応するジュエリー・隠しジェスチャー)を学習目的でオリジナル再現したデモ" />
+<style>
+  :root {
+    --bg: #05060a;
+    --fg: #f3f0e8;
+    --fg-dim: rgba(243, 240, 232, .58);
+    --line: rgba(243, 240, 232, .16);
+    --accent: #d8b46a;
+    --ease: cubic-bezier(.16, 1, .3, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Cormorant Garamond", "Hiragino Mincho ProN", "Yu Mincho", -apple-system, "Segoe UI", serif;
+    overflow-x: hidden;
+    cursor: none;
+  }
+  a { color: inherit; }
+
+  /* ============================================================
+     0. 背景の3Dキャンバス
+     position: fixed で画面全体に固定し、その手前を通常の
+     ドキュメントフローでスクロールさせることで「3Dシーンは固定、
+     スクロール量だけを読み取って部屋を移動する」構成にしている。
+     ============================================================ */
+  #stage {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+    z-index: 0;
+  }
+
+  /* 部屋(アルコーブ)の数だけスクロール量を確保するスペーサー。
+     実際のDOM要素は表示せず、scrollY を読むためだけに存在する。 */
+  #scroll-spacer {
+    position: relative;
+    height: 600vh; /* 6 alcoves * 100vh */
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  /* ============================================================
+     1. オーバーレイUI
+     ============================================================ */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .brandbar {
+    position: absolute;
+    top: 2rem;
+    left: 2.2rem;
+    right: 2.2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    font-size: .72rem;
+    letter-spacing: .32em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+  .brandbar strong { color: var(--fg); font-weight: 600; }
+
+  .room-caption {
+    position: absolute;
+    left: 2.2rem;
+    bottom: 2.4rem;
+    max-width: 30em;
+  }
+  .room-caption .idx {
+    font-size: .7rem;
+    letter-spacing: .3em;
+    color: var(--accent);
+    margin: 0 0 .6rem;
+  }
+  .room-caption h1 {
+    font-size: clamp(1.8rem, 4.4vw, 3.2rem);
+    font-weight: 400;
+    margin: 0 0 .5rem;
+    letter-spacing: .02em;
+    transition: opacity .6s var(--ease), transform .6s var(--ease);
+  }
+  .room-caption p {
+    margin: 0;
+    color: var(--fg-dim);
+    font-size: .92rem;
+    line-height: 1.7;
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    letter-spacing: .02em;
+    transition: opacity .6s var(--ease), transform .6s var(--ease);
+  }
+
+  .dots {
+    position: absolute;
+    right: 2.2rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    pointer-events: auto;
+  }
+  .dots button {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1px solid var(--fg-dim);
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    transition: background .35s var(--ease), transform .35s var(--ease), border-color .35s var(--ease);
+  }
+  .dots button.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    transform: scale(1.3);
+  }
+
+  .scroll-cue {
+    position: absolute;
+    bottom: 2.4rem;
+    right: 2.2rem;
+    font-size: .68rem;
+    letter-spacing: .28em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+    writing-mode: vertical-rl;
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    opacity: .85;
+  }
+  .scroll-cue::after {
+    content: "";
+    width: 1px;
+    height: 3.2rem;
+    background: linear-gradient(var(--fg-dim), transparent);
+    animation: cue 2.4s ease-in-out infinite;
+  }
+  @keyframes cue { 0% { transform: scaleY(0); transform-origin: top; } 50% { transform: scaleY(1); transform-origin: top; } 50.01% { transform-origin: bottom; } 100% { transform: scaleY(0); transform-origin: bottom; } }
+
+  .hint {
+    position: absolute;
+    left: 50%;
+    top: 1.6rem;
+    transform: translateX(-50%);
+    font-size: .68rem;
+    letter-spacing: .2em;
+    color: var(--fg-dim);
+    opacity: 0;
+    transition: opacity .5s var(--ease);
+    text-align: center;
+  }
+  .hint.show { opacity: .9; }
+
+  /* ============================================================
+     2. カスタムカーソル(隠しジェスチャーの手がかりを兼ねる)
+     ============================================================ */
+  .cursor {
+    position: fixed;
+    top: 0; left: 0;
+    width: 26px; height: 26px;
+    margin: -13px 0 0 -13px;
+    border-radius: 50%;
+    border: 1px solid var(--accent);
+    z-index: 3;
+    pointer-events: none;
+    transition: width .3s var(--ease), height .3s var(--ease), margin .3s var(--ease), opacity .3s var(--ease), border-color .3s var(--ease);
+    mix-blend-mode: difference;
+  }
+  .cursor::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 3px; height: 3px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .cursor.hover {
+    width: 64px; height: 64px;
+    margin: -32px 0 0 -32px;
+    border-color: var(--fg);
+  }
+
+  noscript {
+    position: fixed; inset: 0; z-index: 5; display: flex;
+    align-items: center; justify-content: center; text-align: center;
+    background: var(--bg); color: var(--fg); padding: 2rem; font-family: sans-serif;
+  }
+
+  @media (max-width: 720px) {
+    body { cursor: auto; }
+    .cursor { display: none; }
+    .dots { right: 1.1rem; gap: .7rem; }
+    .room-caption { left: 1.2rem; right: 1.2rem; bottom: 1.6rem; }
+    .brandbar { left: 1.2rem; right: 1.2rem; top: 1.2rem; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="stage"></canvas>
+<div id="scroll-spacer"></div>
+
+<div class="overlay">
+  <div class="brandbar">
+    <span><strong>SIX ALCOVES</strong> — a scroll-driven jewel pavilion</span>
+    <span id="room-count">I / VI</span>
+  </div>
+
+  <div class="room-caption">
+    <p class="idx" id="room-idx">ALCOVE I</p>
+    <h1 id="room-title">The Amber Hour</h1>
+    <p id="room-desc">静かな部屋の中心に、光をまとった宝飾オブジェが浮かぶ。近づくと目覚め、触れると音を返す。</p>
+  </div>
+
+  <div class="dots" id="dots"></div>
+  <div class="scroll-cue">SCROLL</div>
+  <div class="hint" id="hint">カーソルを宝飾オブジェに近づけてクリックしてみてください</div>
+</div>
+
+<div class="cursor" id="cursor"></div>
+
+<noscript>このデモはJavaScript(WebGL/Three.js)を使用します。ブラウザでJavaScriptを有効にしてください。</noscript>
+
+<!-- ============================================================
+     three.js は MIT ライセンスのオープンソースライブラリ本体を
+     vendor/ にそのまま同梱している(対象サイトの著作物ではない)。
+     ============================================================ -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+
+/* ==================================================================
+   SIX ALCOVES — 学習用オリジナル再現デモ
+   参照元: Cartier Watches & Wonders 2026 (制作: Immersive Garden)
+   https://www.awwwards.com/sites/cartier-watches-wonders-2026
+
+   このファイルは対象サイトのソースコードを一切参照・複製していない。
+   「6つの3Dルーム(アルコーブ)をスクロールで巡り、各部屋にジュエリー風
+   オブジェクトが水鏡の上に浮かぶ」という観察された仕組みだけを手がかりに、
+   ゼロから独自に設計・実装したもの。宝飾品の名称・説明文もすべて架空。
+   ================================================================== */
+
+/* ---- 1. 部屋(アルコーブ)の設定データ ------------------------------
+   自分のプロジェクトに組み込むときは、この配列を書き換えるだけで
+   部屋数・色味・キャプションを自由に変更できる。 */
+const ALCOVES = [
+  { title: "The Amber Hour",     roman: "I",   desc: "静かな部屋の中心に、光をまとった宝飾オブジェが浮かぶ。近づくと目覚め、触れると音を返す。", fog: 0x2a1a0c, floor: 0xd8b46a, gem: 0xffb066, side:  1 },
+  { title: "Verdant Meridian",   roman: "II",  desc: "深緑の靄の奥、微かな水音とともに面が揺れる。視線を向けるほど輪郭が濃くなる。",           fog: 0x0c2418, floor: 0x6ad8a0, gem: 0x7dffb8, side: -1 },
+  { title: "Glacial Reverie",    roman: "III", desc: "凍える光が床に映り込み、二重写しの宝飾がゆっくりと回転する。",                              fog: 0x0c1a2a, floor: 0x6ab8ff, gem: 0xaee4ff, side:  1 },
+  { title: "Ember Sanctum",      roman: "IV",  desc: "熱を帯びた深紅の間。水面の波紋がクリックのたびに広がっていく。",                             fog: 0x2a0c14, floor: 0xff6a7d, gem: 0xff9db0, side: -1 },
+  { title: "Violet Nocturne",    roman: "V",   desc: "夜の紫が満ちる展示室。宝飾は最も静かに、最も長く揺れる。",                                     fog: 0x1a0c2a, floor: 0xb06aff, gem: 0xd8aeff, side:  1 },
+  { title: "The Silver Horizon", roman: "VI",  desc: "最後の部屋。地平線が最も近くに見え、すべての部屋の記憶が水面に薄く重なる。",                   fog: 0x141820, floor: 0xd8dce6, gem: 0xf3f0e8, side: -1 },
+];
+const ROOM_DEPTH = 16; // 各部屋の間隔(three.jsのワールド座標単位)
+
+/* ---- 2. 基本セットアップ ------------------------------------------ */
+const canvas = document.getElementById("stage");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x05060a, 0.045);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, .1, 200);
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize);
+resize();
+
+/* ---- 3. 水鏡フロア用シェーダー -------------------------------------
+   「水面のように揺れ、うっすら反射する床」を、実カメラで反射を
+   再レンダリングする本格的なプラナーリフレクションではなく、
+   (a) オブジェクトを上下反転して薄く重ねた「疑似反射」メッシュと
+   (b) 波打つ法線と縁が明るくなるフレネル風の着色を行う床シェーダー
+   の組み合わせで安価に表現している。フレーム毎に uTime と
+   uRipples(クリック位置の波紋)だけを更新すればよい。 */
+const floorVertex = `
+  uniform float uTime;
+  uniform vec4 uRipples[6]; // xy = position, z = startTime, w = active
+  varying vec2 vUv;
+  varying float vWave;
+  void main() {
+    vUv = uv;
+    vec3 pos = position;
+    float wave = sin(pos.x * 0.5 + uTime * 0.6) * 0.06
+               + sin(pos.y * 0.35 - uTime * 0.4) * 0.08;
+    for (int i = 0; i < 6; i++) {
+      vec4 r = uRipples[i];
+      if (r.w > 0.5) {
+        float t = uTime - r.z;
+        float d = distance(pos.xy, r.xy);
+        float ring = sin(d * 3.0 - t * 6.0) * exp(-t * 1.4) * exp(-d * 0.12);
+        wave += ring * 0.4;
+      }
+    }
+    vWave = wave;
+    pos.z += wave;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+  }
+`;
+const floorFragment = `
+  uniform vec3 uColor;
+  varying vec2 vUv;
+  varying float vWave;
+  void main() {
+    float edge = smoothstep(0.0, 0.5, min(vUv.x, 1.0 - vUv.x)) * smoothstep(0.0, 0.5, min(vUv.y, 1.0 - vUv.y));
+    float sheen = 0.5 + vWave * 1.6;
+    vec3 col = mix(uColor * 0.08, uColor * 0.55, sheen);
+    col += pow(1.0 - edge, 3.0) * uColor * 0.4;
+    gl_FragColor = vec4(col, 0.92);
+  }
+`;
+
+function makeFloor(colorHex) {
+  const geo = new THREE.PlaneGeometry(11, 11, 60, 60);
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: floorVertex,
+    fragmentShader: floorFragment,
+    uniforms: {
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color(colorHex) },
+      uRipples: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, 0, 0)) },
+    },
+    transparent: true,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  return mesh;
+}
+
+/* ---- 4. ジュエリー風オブジェクト -----------------------------------
+   トーラス+八面体の組み合わせで「宝飾品」を抽象的に表現。
+   実際の時計/宝飾デザインは複製せず独自の幾何学形状にしている。 */
+function makeGem(colorHex) {
+  const group = new THREE.Group();
+
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(1.05, 1),
+    new THREE.MeshPhysicalMaterial({
+      color: colorHex, metalness: .35, roughness: .12,
+      transmission: .55, thickness: 1.2, clearcoat: 1, envMapIntensity: 1.4,
+    })
+  );
+  group.add(core);
+
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(1.7, .05, 16, 96),
+    new THREE.MeshStandardMaterial({ color: colorHex, metalness: .9, roughness: .25, emissive: colorHex, emissiveIntensity: .15 })
+  );
+  ring.rotation.x = Math.PI / 2.4;
+  group.add(ring);
+
+  const ring2 = ring.clone();
+  ring2.rotation.x = -Math.PI / 3;
+  ring2.rotation.z = Math.PI / 5;
+  group.add(ring2);
+
+  const pedestal = new THREE.Mesh(
+    new THREE.CylinderGeometry(.5, .7, 1.6, 32),
+    new THREE.MeshStandardMaterial({ color: 0x0a0a0d, metalness: .6, roughness: .4 })
+  );
+  pedestal.position.y = -1.8;
+  group.add(pedestal);
+
+  return group;
+}
+
+/* ---- 5. 各アルコーブを組み立てる ------------------------------------ */
+const rooms = ALCOVES.map((cfg, i) => {
+  const room = new THREE.Group();
+  room.position.z = -i * ROOM_DEPTH;
+
+  const floor = makeFloor(cfg.floor);
+  floor.position.y = -1.9;
+  room.add(floor);
+
+  const gem = makeGem(cfg.gem);
+  gem.position.y = 1.3;
+  room.add(gem);
+
+  // 疑似反射: 同じジュエリーを上下反転させ、床の下にうっすら重ねる
+  const mirrored = makeGem(cfg.gem);
+  mirrored.scale.y = -1;
+  mirrored.position.y = -1.9 - 1.3;
+  mirrored.traverse((o) => { if (o.material) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = .28; } });
+  room.add(mirrored);
+
+  // 部屋ごとの点光源(色温度を変えてキャプションの色と揃える)
+  const key = new THREE.PointLight(cfg.gem, 40, 14, 2);
+  key.position.set(cfg.side * 3, 4, 1.5);
+  room.add(key);
+  const rim = new THREE.PointLight(cfg.floor, 22, 14, 2);
+  rim.position.set(-cfg.side * 3, 1.5, -2.5);
+  room.add(rim);
+
+  scene.add(room);
+  return { group: room, gem, mirrored, floor, cfg };
+});
+
+scene.add(new THREE.AmbientLight(0x404060, .6));
+
+/* ---- 6. スクロール → 部屋の進行度 ----------------------------------
+   本物のGSAP+Lenisの代わりに、scrollYから0〜(部屋数-1)の連続値を求め、
+   requestAnimationFrame毎にカメラをその目標値へ指数減衰で追従させる
+   (= 慣性のあるスムーススクロールと同じ原理)。 */
+const roomCount = ALCOVES.length;
+let scrollProgress = 0;   // 目標値(0 〜 roomCount-1)
+let smoothProgress = 0;   // カメラに反映する減衰後の値
+
+function updateScrollProgress() {
+  const doc = document.documentElement;
+  const max = doc.scrollHeight - innerHeight;
+  const t = max > 0 ? doc.scrollTop / max : 0;
+  scrollProgress = t * (roomCount - 1);
+}
+addEventListener("scroll", updateScrollProgress, { passive: true });
+updateScrollProgress();
+
+/* ---- 7. マウス視差 & 隠しジェスチャー -------------------------------- */
+const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
+const raycaster = new THREE.Raycaster();
+const cursorEl = document.getElementById("cursor");
+const hintEl = document.getElementById("hint");
+let hoveredGem = null;
+let hasClicked = false;
+
+addEventListener("pointermove", (e) => {
+  pointer.tx = (e.clientX / innerWidth) * 2 - 1;
+  pointer.ty = (e.clientY / innerHeight) * 2 - 1;
+  cursorEl.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+});
+
+function currentRoomIndex() {
+  return Math.round(smoothProgress);
+}
+
+addEventListener("click", (e) => {
+  const idx = currentRoomIndex();
+  const room = rooms[idx];
+  raycaster.setFromCamera({ x: pointer.tx, y: -pointer.ty }, camera);
+  const hit = raycaster.intersectObject(room.gem, true);
+  if (hit.length) {
+    playChime(idx);
+    spawnRipple(room, room.gem.position.x, room.gem.position.z + room.group.position.z);
+    hasClicked = true;
+    hintEl.classList.remove("show");
+  }
+});
+
+function spawnRipple(room, worldX, worldZ) {
+  const localX = worldX - room.group.position.x;
+  const localZ = 0; // 床はXY平面をXZに回転しているため、床ローカルのY=ワールドZ相当
+  const arr = room.floor.material.uniforms.uRipples.value;
+  arr.shift();
+  arr.push(new THREE.Vector4(localX, localZ, clock.getElapsedTime(), 1));
+}
+
+/* Web Audio によるシンプルな「触れると鳴る」チャイム音。
+   外部音源ファイルを使わず、その場でオシレーターから生成している。 */
+let audioCtx = null;
+function playChime(roomIndex) {
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  const base = 260 + roomIndex * 40;
+  [1, 1.5, 2.01].forEach((mult, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = base * mult;
+    gain.gain.value = 0;
+    osc.connect(gain).connect(audioCtx.destination);
+    const t0 = audioCtx.currentTime + i * 0.05;
+    gain.gain.linearRampToValueAtTime(.05 / (i + 1), t0 + .04);
+    gain.gain.exponentialRampToValueAtTime(.0001, t0 + 1.6);
+    osc.start(t0);
+    osc.stop(t0 + 1.7);
+  });
+}
+
+/* ---- 8. ナビゲーションドット ---------------------------------------- */
+const dotsEl = document.getElementById("dots");
+ALCOVES.forEach((cfg, i) => {
+  const b = document.createElement("button");
+  b.setAttribute("aria-label", cfg.title);
+  b.addEventListener("click", () => {
+    const doc = document.documentElement;
+    const max = doc.scrollHeight - innerHeight;
+    window.scrollTo({ top: (i / (roomCount - 1)) * max, behavior: "smooth" });
+  });
+  dotsEl.appendChild(b);
+});
+const dotButtons = [...dotsEl.children];
+
+/* ---- 9. キャプションの更新 ------------------------------------------- */
+const titleEl = document.getElementById("room-title");
+const descEl = document.getElementById("room-desc");
+const idxEl = document.getElementById("room-idx");
+const countEl = document.getElementById("room-count");
+const ROMANS = ["I", "II", "III", "IV", "V", "VI"];
+let lastShownIndex = -1;
+
+function updateCaption(idx) {
+  if (idx === lastShownIndex) return;
+  lastShownIndex = idx;
+  const cfg = ALCOVES[idx];
+  [titleEl, descEl].forEach((el) => { el.style.opacity = 0; el.style.transform = "translateY(10px)"; });
+  setTimeout(() => {
+    titleEl.textContent = cfg.title;
+    descEl.textContent = cfg.desc;
+    idxEl.textContent = `ALCOVE ${cfg.roman}`;
+    countEl.textContent = `${cfg.roman} / VI`;
+    [titleEl, descEl].forEach((el) => { el.style.opacity = 1; el.style.transform = "translateY(0)"; });
+  }, 260);
+  dotButtons.forEach((b, i) => b.classList.toggle("active", i === idx));
+}
+
+/* ---- 10. メインループ -------------------------------------------------- */
+const clock = new THREE.Clock();
+const lookTarget = new THREE.Vector3();
+const camPos = new THREE.Vector3();
+
+function frame() {
+  const dt = Math.min(clock.getDelta(), 1 / 30);
+  const t = clock.getElapsedTime();
+
+  // 慣性のあるスクロール追従(指数減衰=フレームレート非依存のlerp)
+  smoothProgress += (scrollProgress - smoothProgress) * (1 - Math.pow(0.001, dt));
+  pointer.x += (pointer.tx - pointer.x) * .06;
+  pointer.y += (pointer.ty - pointer.y) * .06;
+
+  // ブレンド用インデックス(a→bの2部屋間を frac で補間する)
+  const blendIdx = THREE.MathUtils.clamp(Math.floor(smoothProgress), 0, roomCount - 2);
+  const frac = THREE.MathUtils.clamp(smoothProgress - blendIdx, 0, 1);
+  const a = rooms[blendIdx];
+  const b = rooms[Math.min(blendIdx + 1, roomCount - 1)];
+  // 「現在の部屋」判定用インデックス(round を使うことで、指数減衰が
+  // 浮動小数点誤差で目標値ぴったりに到達しない最終部屋でも正しく選ばれる)
+  const idx = THREE.MathUtils.clamp(Math.round(smoothProgress), 0, roomCount - 1);
+
+  // カメラは2部屋間をブレンドしつつ、部屋の左右に少し寄って被写体を見る
+  const sideA = a.cfg.side, sideB = b.cfg.side;
+  camPos.set(
+    THREE.MathUtils.lerp(sideA * 2.1, sideB * 2.1, frac) + pointer.x * .5,
+    THREE.MathUtils.lerp(1.6, 1.6, frac) - pointer.y * .3,
+    THREE.MathUtils.lerp(a.group.position.z + 5.4, b.group.position.z + 5.4, frac)
+  );
+  camera.position.copy(camPos);
+  lookTarget.set(
+    THREE.MathUtils.lerp(a.group.position.x, b.group.position.x, frac),
+    1.1,
+    THREE.MathUtils.lerp(a.group.position.z, b.group.position.z, frac)
+  );
+  camera.lookAt(lookTarget);
+
+  // 背景色・フォグを現在の部屋の色にブレンド(「地平線が漂う」印象を作る)
+  const fogA = new THREE.Color(a.cfg.fog), fogB = new THREE.Color(b.cfg.fog);
+  const blended = fogA.clone().lerp(fogB, frac);
+  scene.fog.color.copy(blended);
+  renderer.setClearColor(blended, 1);
+
+  // 各部屋のジュエリーを回転・浮遊させ、現在の部屋(視点が最も近い部屋)は
+  // ホバー中さらに強く反応させる(隠しジェスチャー)
+  rooms.forEach((r, i) => {
+    const isCurrent = i === idx;
+    const hover = isCurrent && pointerNearGem(r);
+    const targetSpeed = hover ? 1.6 : 0.35;
+    r.gem.rotation.y += dt * targetSpeed;
+    r.mirrored.rotation.y = r.gem.rotation.y;
+    const float = Math.sin(t * .8 + i) * .12;
+    r.gem.position.y = 1.3 + float + (hover ? .15 : 0);
+    r.mirrored.position.y = -1.9 - 1.3 - float - (hover ? .15 : 0);
+    const targetScale = hover ? 1.12 : 1;
+    r.gem.scale.setScalar(THREE.MathUtils.lerp(r.gem.scale.x, targetScale, .1));
+    r.floor.material.uniforms.uTime.value = t;
+    if (isCurrent) {
+      cursorEl.classList.toggle("hover", hover);
+      if (hover && !hasClicked) hintEl.classList.add("show");
+      if (!hover) hintEl.classList.remove("show");
+    }
+  });
+
+  updateCaption(idx);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+function pointerNearGem(room) {
+  raycaster.setFromCamera({ x: pointer.tx, y: -pointer.ty }, camera);
+  return raycaster.intersectObject(room.gem, true).length > 0;
+}
+
+updateCaption(0);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
