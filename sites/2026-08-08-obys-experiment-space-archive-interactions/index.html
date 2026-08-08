@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EXPERIMENT ARCHIVE — マグネットカーソル×ホバープレビュー×ドラッグストリーム 再現デモ</title>
+<meta name="description" content="Awwwards Site of the Day『Obys® Experiment Space』(Obys)のアーカイブUI表現(マグネティックカーソル・カーソル追従ホバープレビュー・ドラッグ可能な横ストリーム・グリッド/ストリーム切替のFLIPレイアウト)を、依存ライブラリなしのVanilla JSでオリジナル再現した学習用デモ。" />
+<style>
+  :root{
+    --bg:#f2f0ea;
+    --fg:#14140f;
+    --fg-dim:rgba(20,20,15,.55);
+    --line:rgba(20,20,15,.16);
+    --accent:#ff4d1c;
+    --ease:cubic-bezier(.16,1,.3,1);
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; min-height:100%; background:var(--bg); color:var(--fg);
+    font-family:"Helvetica Neue",Arial,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* 実サイトはカスタムカーソルを主役にするため、ネイティブカーソルは消す。
+     ただしタッチ端末では pointer:coarse を検出して自動的に戻す(下部JS参照)。 */
+  body.no-native-cursor, body.no-native-cursor *{ cursor:none; }
+
+  header{
+    position:sticky; top:0; z-index:5;
+    display:flex; align-items:baseline; justify-content:space-between;
+    padding:22px 28px; border-bottom:1px solid var(--line);
+    background:color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter:blur(6px);
+  }
+  header h1{
+    margin:0; font-size:15px; letter-spacing:.08em; font-weight:700;
+  }
+  header h1 span{ color:var(--fg-dim); font-weight:400; }
+  .view-toggle{ display:flex; gap:6px; }
+  .view-toggle button{
+    font:inherit; font-size:11px; letter-spacing:.08em; font-weight:700;
+    padding:8px 14px; border:1px solid var(--line); background:transparent;
+    color:var(--fg-dim); border-radius:99px; transition:color .2s var(--ease), border-color .2s var(--ease);
+  }
+  .view-toggle button.active{ color:var(--bg); border-color:var(--fg); background:var(--fg); }
+
+  main{ padding:36px 28px 120px; }
+  p.lede{ max-width:46em; color:var(--fg-dim); font-size:14px; line-height:1.8; margin:0 0 34px; }
+
+  /* ============================================================
+     アーカイブ本体。グリッド表示とストリーム表示の2レイアウトを
+     同じ .item 要素群に対して切り替える。並び替えの見た目上の移動は
+     すべて FLIP 法(後述 flipLayout 関数)でアニメーションさせる。
+     ============================================================ */
+  #archive{ position:relative; }
+  #archive.grid-view{
+    display:grid; grid-template-columns:repeat(4, 1fr); gap:2px;
+  }
+  #archive.stream-view{
+    display:flex; overflow:hidden; margin:0 -28px; padding:0 28px;
+    cursor:grab;
+  }
+  #archive.stream-view.dragging{ cursor:grabbing; }
+  #archive.stream-view .track{
+    display:flex; gap:2px; will-change:transform;
+  }
+  /* grid-view のときは .track を素通しの display:contents にして
+     アイテムを直接グリッドの子として並べる */
+  #archive.grid-view .track{ display:contents; }
+
+  .item{
+    position:relative; border:1px solid var(--line);
+    aspect-ratio:4/5; overflow:hidden; background:var(--bg);
+  }
+  #archive.stream-view .item{ flex:0 0 240px; }
+  .item .swatch{
+    position:absolute; inset:0;
+    transition:transform .6s var(--ease);
+  }
+  .item:hover .swatch{ transform:scale(1.06); }
+  .item .meta{
+    position:absolute; left:0; right:0; bottom:0; padding:12px 14px;
+    display:flex; justify-content:space-between; align-items:flex-end;
+    background:linear-gradient(to top, rgba(0,0,0,.45), transparent);
+    color:#fff;
+  }
+  .item .meta .no{ font-size:10px; opacity:.75; letter-spacing:.08em; }
+  .item .meta .name{ font-size:12px; font-weight:700; letter-spacing:.02em; }
+
+  /* ============================================================
+     カスタムカーソル。実サイトの「要素に吸着してラベルが変わる
+     マグネティックカーソル」を、通常時は小さいドット、ホバー時は
+     ラベル付きの丸に拡大するかたちで再現する。
+     ============================================================ */
+  #cursor{
+    position:fixed; top:0; left:0; z-index:50; pointer-events:none;
+    width:14px; height:14px; margin:-7px 0 0 -7px; border-radius:50%;
+    background:var(--fg); mix-blend-mode:difference;
+    display:flex; align-items:center; justify-content:center;
+    transition:width .28s var(--ease), height .28s var(--ease), margin .28s var(--ease), background .28s var(--ease);
+  }
+  #cursor span{
+    color:#fff; font-size:11px; font-weight:700; letter-spacing:.06em;
+    opacity:0; transform:scale(.6); transition:opacity .2s var(--ease), transform .2s var(--ease);
+    white-space:nowrap;
+  }
+  #cursor.hover{
+    width:74px; height:74px; margin:-37px 0 0 -37px; background:var(--accent);
+  }
+  #cursor.hover span{ opacity:1; transform:scale(1); }
+
+  /* ============================================================
+     カーソル追従のホバープレビュー。アーカイブの行(または将来的な
+     リスト表示)にカーソルを乗せると、対応する画像が少し遅れて
+     追いかけてくる「浮遊サムネイル」。
+     ============================================================ */
+  #preview{
+    position:fixed; top:0; left:0; z-index:40; pointer-events:none;
+    width:220px; height:150px; margin:-75px 0 0 -110px;
+    border-radius:6px; overflow:hidden; opacity:0;
+    box-shadow:0 20px 40px rgba(0,0,0,.25);
+    transition:opacity .25s var(--ease);
+  }
+  #preview.visible{ opacity:1; }
+  #preview .swatch{ position:absolute; inset:0; }
+
+  footer{
+    padding:24px 28px; border-top:1px solid var(--line);
+    font-size:11px; color:var(--fg-dim); letter-spacing:.03em;
+  }
+
+  @media (max-width:820px){
+    #archive.grid-view{ grid-template-columns:repeat(2,1fr); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>EXPERIMENT ARCHIVE <span>— reproduction demo</span></h1>
+  <div class="view-toggle" id="viewToggle">
+    <button type="button" data-view="grid-view" class="active" data-cursor-label="SWITCH">GRID</button>
+    <button type="button" data-view="stream-view" data-cursor-label="SWITCH">STREAM</button>
+  </div>
+</header>
+
+<main>
+  <p class="lede">
+    「未発表の実験・断片のアーカイブ」を、構造化されたグリッドと、横に流れるストリームの
+    2つの見せ方で行き来できるようにした再現デモです。カードにカーソルを重ねるとカーソル自体が
+    ラベル付きの丸に変形し、少し遅れて浮遊サムネイルが追従します。STREAM 表示ではカードの列を
+    ドラッグ(またはホイール)でスクラブできます。
+  </p>
+
+  <div id="archive" class="grid-view">
+    <div class="track" id="track"></div>
+  </div>
+</main>
+
+<footer>
+  This is an original, from-scratch reproduction of interaction patterns for learning purposes — not a copy of any real site's code.
+</footer>
+
+<div id="cursor"><span id="cursorLabel"></span></div>
+<div id="preview"><div class="swatch" id="previewSwatch"></div></div>
+
+<script>
+/* ==================================================================
+   1. データ定義 — 実際に使う際はここを自分のコンテンツに差し替える
+   ================================================================== */
+const ITEMS = [
+  { no:'01', name:'Type Test',      hue:12  },
+  { no:'02', name:'Grid Break',     hue:200 },
+  { no:'03', name:'Unused Motion',  hue:48  },
+  { no:'04', name:'Color Study A',  hue:330 },
+  { no:'05', name:'Spatial Comp.',  hue:160 },
+  { no:'06', name:'Interface v0',   hue:270 },
+  { no:'07', name:'Texture Pass',   hue:24  },
+  { no:'08', name:'Layout Alt.',    hue:96  },
+  { no:'09', name:'Motion Test B',  hue:210 },
+  { no:'10', name:'Discarded Idea', hue:0   },
+  { no:'11', name:'Color Study B',  hue:288 },
+  { no:'12', name:'Fragment X',     hue:150 },
+];
+
+/* ==================================================================
+   2. アーカイブ本体を生成
+   ================================================================== */
+const track = document.getElementById('track');
+ITEMS.forEach(item => {
+  const el = document.createElement('div');
+  el.className = 'item';
+  el.dataset.cursorLabel = 'VIEW';
+  el.innerHTML = `
+    <div class="swatch" style="background:
+      linear-gradient(155deg,
+        hsl(${item.hue} 70% 62%),
+        hsl(${item.hue + 40} 60% 40%))"></div>
+    <div class="meta"><span class="no">${item.no}</span><span class="name">${item.name}</span></div>
+  `;
+  el.dataset.hue = item.hue;
+  track.appendChild(el);
+});
+
+/* ==================================================================
+   3. マグネティックカーソル
+   ------------------------------------------------------------------
+   使い方: cursor:none を当てた要素の上で、ラベルを出したい対象に
+   data-cursor-label="TEXT" を付けるだけ。近づくとラベル付きの丸に
+   変形し、中心が要素の中心へわずかに吸い寄せられる(マグネット効果)。
+   タッチ端末では自動的に無効化してネイティブカーソル/タップに戻す。
+   ================================================================== */
+function createMagneticCursor(cursorEl, labelEl){
+  const isTouch = matchMedia('(pointer:coarse)').matches;
+  if (isTouch) return { destroy(){} };
+  document.body.classList.add('no-native-cursor');
+
+  const pos = { x:innerWidth/2, y:innerHeight/2 };
+  const render = { x:pos.x, y:pos.y };
+  let magnetTarget = null; // 現在吸着中の要素の中心座標
+
+  function onMove(e){
+    pos.x = e.clientX; pos.y = e.clientY;
+    const target = e.target.closest('[data-cursor-label]');
+    if (target){
+      const r = target.getBoundingClientRect();
+      magnetTarget = { x:r.left + r.width/2, y:r.top + r.height/2 };
+      cursorEl.classList.add('hover');
+      labelEl.textContent = target.dataset.cursorLabel || '';
+    } else {
+      magnetTarget = null;
+      cursorEl.classList.remove('hover');
+      labelEl.textContent = '';
+    }
+  }
+  addEventListener('pointermove', onMove);
+
+  (function loop(){
+    // 吸着対象があればその中心へ、なければ実際のポインタ位置へ lerp で近づく
+    const goal = magnetTarget || pos;
+    render.x += (goal.x - render.x) * 0.22;
+    render.y += (goal.y - render.y) * 0.22;
+    cursorEl.style.transform = `translate3d(${render.x}px, ${render.y}px, 0)`;
+    requestAnimationFrame(loop);
+  })();
+
+  return { destroy(){ removeEventListener('pointermove', onMove); } };
+}
+createMagneticCursor(document.getElementById('cursor'), document.getElementById('cursorLabel'));
+
+/* ==================================================================
+   4. カーソル追従ホバープレビュー
+   ------------------------------------------------------------------
+   使い方: previewEl の中に .swatch 等の中身要素を用意し、
+   itemsSelector に一致する要素へマウスが乗ったときに中身を更新して
+   フェード表示する。追従はワンテンポ遅らせて「浮遊感」を出すため、
+   ポインタ座標を直接使わず lerp で近づける。
+   ================================================================== */
+function createHoverPreview(previewEl, swatchEl, itemsSelector, onEnterItem){
+  const isTouch = matchMedia('(pointer:coarse)').matches;
+  if (isTouch) return { destroy(){} };
+
+  const pos = { x:innerWidth/2, y:innerHeight/2 };
+  const render = { x:pos.x, y:pos.y };
+  let active = false;
+
+  function onMove(e){
+    pos.x = e.clientX; pos.y = e.clientY;
+    const item = e.target.closest(itemsSelector);
+    if (item){
+      if (!active) onEnterItem(item, swatchEl);
+      active = true;
+      previewEl.classList.add('visible');
+    } else {
+      active = false;
+      previewEl.classList.remove('visible');
+    }
+  }
+  addEventListener('pointermove', onMove);
+
+  (function loop(){
+    // 実際のポインタより一歩遅れて追いかけることで浮遊しているように見せる
+    render.x += (pos.x - render.x) * 0.14;
+    render.y += (pos.y - render.y) * 0.14;
+    previewEl.style.transform = `translate3d(${render.x}px, ${render.y}px, 0)`;
+    requestAnimationFrame(loop);
+  })();
+
+  return { destroy(){ removeEventListener('pointermove', onMove); } };
+}
+createHoverPreview(
+  document.getElementById('preview'),
+  document.getElementById('previewSwatch'),
+  '.item',
+  (item, swatchEl) => {
+    const hue = item.dataset.hue;
+    swatchEl.style.background =
+      `linear-gradient(155deg, hsl(${hue} 70% 62%), hsl(${Number(hue) + 40} 60% 40%))`;
+  }
+);
+
+/* ==================================================================
+   5. ドラッグ可能な横ストリーム(慣性つき)
+   ------------------------------------------------------------------
+   使い方: wrapperEl(overflow:hidden な親)の中の trackEl を
+   transform:translateX で動かす方式。ネイティブの overflow-scroll
+   ではなく自前で座標を持つことで、指を離した後の「慣性で滑って止まる」
+   モーメンタムスクロールを実装できる。
+   ================================================================== */
+function createDragStream(wrapperEl, trackEl){
+  let x = 0;          // 現在のtranslateX
+  let velocity = 0;    // 現在の速度(慣性用)
+  let dragging = false;
+  let startX = 0, startPointerX = 0, lastPointerX = 0, lastT = 0;
+
+  function bounds(){
+    const max = 0;
+    const min = Math.min(0, wrapperEl.clientWidth - trackEl.scrollWidth);
+    return { min, max };
+  }
+  function clamp(v){
+    const { min, max } = bounds();
+    return Math.min(max, Math.max(min, v));
+  }
+  function apply(){ trackEl.style.transform = `translate3d(${x}px,0,0)`; }
+
+  function onDown(e){
+    if (!wrapperEl.classList.contains('stream-view')) return;
+    dragging = true;
+    wrapperEl.classList.add('dragging');
+    startX = x; startPointerX = lastPointerX = e.clientX; lastT = performance.now();
+    velocity = 0;
+    wrapperEl.setPointerCapture(e.pointerId);
+  }
+  function onMoveDrag(e){
+    if (!dragging) return;
+    const dx = e.clientX - startPointerX;
+    x = clamp(startX + dx);
+    const now = performance.now();
+    const dt = Math.max(1, now - lastT);
+    velocity = (e.clientX - lastPointerX) / dt; // px/ms
+    lastPointerX = e.clientX; lastT = now;
+    apply();
+  }
+  function onUp(){
+    if (!dragging) return;
+    dragging = false;
+    wrapperEl.classList.remove('dragging');
+    momentumLoop();
+  }
+  function momentumLoop(){
+    if (Math.abs(velocity) < 0.02) return;
+    velocity *= 0.93; // 摩擦による減衰
+    x = clamp(x + velocity * 16);
+    apply();
+    requestAnimationFrame(momentumLoop);
+  }
+  function onWheel(e){
+    if (!wrapperEl.classList.contains('stream-view')) return;
+    e.preventDefault();
+    x = clamp(x - (e.deltaY + e.deltaX));
+    apply();
+  }
+
+  wrapperEl.addEventListener('pointerdown', onDown);
+  addEventListener('pointermove', onMoveDrag);
+  addEventListener('pointerup', onUp);
+  wrapperEl.addEventListener('wheel', onWheel, { passive:false });
+
+  return {
+    reset(){ x = 0; velocity = 0; apply(); },
+  };
+}
+const dragStream = createDragStream(document.getElementById('archive'), track);
+
+/* ==================================================================
+   6. FLIP法によるグリッド/ストリーム切替アニメーション
+   ------------------------------------------------------------------
+   使い方: 見た目上の並びが変わる直前の座標(First)を記録→クラスを
+   切り替えて最終的な並びにしてしまってから最終座標(Last)を取得→
+   その差分だけ逆方向に transform で瞬間移動させ→transitionをつけて
+   transformを0に戻すことで「移動しながら並び替わった」ように見せる。
+   ================================================================== */
+function flipLayout(archiveEl, nextView){
+  const items = [...archiveEl.querySelectorAll('.item')];
+  const first = new Map(items.map(el => [el, el.getBoundingClientRect()]));
+
+  archiveEl.classList.remove('grid-view', 'stream-view');
+  archiveEl.classList.add(nextView);
+  dragStream.reset();
+
+  items.forEach(el => {
+    const f = first.get(el);
+    const l = el.getBoundingClientRect();
+    const dx = f.left - l.left, dy = f.top - l.top;
+    const sx = f.width / l.width, sy = f.height / l.height;
+    el.style.transition = 'none';
+    el.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+    el.style.transformOrigin = 'top left';
+    requestAnimationFrame(() => {
+      el.style.transition = 'transform .7s cubic-bezier(.16,1,.3,1)';
+      el.style.transform = '';
+    });
+  });
+}
+
+const archiveEl = document.getElementById('archive');
+document.getElementById('viewToggle').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-view]');
+  if (!btn) return;
+  document.querySelectorAll('.view-toggle button').forEach(b => b.classList.toggle('active', b === btn));
+  flipLayout(archiveEl, btn.dataset.view);
+});
+</script>
+</body>
+</html>
