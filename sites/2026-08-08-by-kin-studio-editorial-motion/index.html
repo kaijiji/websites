@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>By-Kin 風 エディトリアル・モーション再現デモ</title>
+<style>
+  :root{
+    --bg:#f2efe9;
+    --ink:#17140f;
+    --muted:#8b8478;
+    --line:rgba(23,20,15,.12);
+    --ease-out-expo: cubic-bezier(.16,1,.3,1);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"Helvetica Neue",Arial,"Hiragino Sans","Noto Sans JP",sans-serif;
+    overflow-x:hidden;
+  }
+
+  /* ---------------------------------------------------------------
+     持続するヘッダー(常にDOMに残るナビ)
+     ページを切り替えても再生成されないので「1枚の連続した面」に見える
+  --------------------------------------------------------------- */
+  .nav{
+    position:fixed; top:0; left:0; right:0; z-index:50;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:22px 32px;
+    mix-blend-mode:difference;
+    color:#fff;
+    pointer-events:none;
+  }
+  .nav a, .nav .logo{ pointer-events:auto; }
+  .logo{ font-weight:700; letter-spacing:.04em; text-decoration:none; color:inherit; font-size:14px;}
+  .nav-links{ display:flex; gap:28px; list-style:none; margin:0; padding:0; }
+  .nav-links a{
+    color:inherit; text-decoration:none; font-size:13px; letter-spacing:.06em;
+    text-transform:uppercase; position:relative; opacity:.75; transition:opacity .3s var(--ease-out-expo);
+  }
+  .nav-links a:hover, .nav-links a.active{ opacity:1; }
+
+  /* ---------------------------------------------------------------
+     慣性(重み)のあるスムーススクロール
+     本物の高さを持つspacerで scrollbar を維持しつつ、
+     実コンテンツは position:fixed にして transform で追従させ、
+     目標値へ lerp(線形補間) で近づけることで「重さ」を出す
+  --------------------------------------------------------------- */
+  #scroll-content{
+    position:fixed; top:0; left:0; width:100%; will-change:transform;
+  }
+  #scroll-spacer{ width:1px; }
+
+  .page{ display:none; }
+  .page.active{ display:block; }
+
+  /* ページ切替時のクロスフェード+スライド(継ぎ目を感じさせない遷移) */
+  .page-transition-out{ animation: pageOut .5s var(--ease-out-expo) forwards; }
+  .page-transition-in{ animation: pageIn .7s var(--ease-out-expo) forwards; }
+  @keyframes pageOut{ to{ opacity:0; transform:translateY(-24px); } }
+  @keyframes pageIn{ from{ opacity:0; transform:translateY(24px); } to{ opacity:1; transform:translateY(0);} }
+
+  section{ padding:140px 32px 60px; max-width:1180px; margin:0 auto; }
+
+  .hero h1{
+    font-size:clamp(40px,7vw,96px);
+    line-height:1.02; letter-spacing:-.02em; margin:0 0 28px;
+    font-weight:500;
+  }
+  .hero p{ max-width:520px; color:var(--muted); font-size:16px; line-height:1.6; }
+
+  /* 文字単位のテキストリビール用ラッパー(JSで中身をspanに分解する) */
+  .split-line{ overflow:hidden; display:block; }
+  .split-word{
+    display:inline-block; transform:translateY(110%); opacity:0;
+    transition:transform .9s var(--ease-out-expo), opacity .9s var(--ease-out-expo);
+  }
+  .split-line.is-visible .split-word{ transform:translateY(0); opacity:1; }
+
+  /* ---------------------------------------------------------------
+     ポートレート優先のグリッドと、clip-pathによるマスク・リビール
+  --------------------------------------------------------------- */
+  .grid{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+    gap:6px; margin-top:80px;
+  }
+  .card{
+    position:relative; aspect-ratio:3/4; overflow:hidden; background:#1c1a16;
+  }
+  .card .frame{
+    position:absolute; inset:0;
+    background:
+      linear-gradient(160deg,var(--c1,#8a7f6a),var(--c2,#2c2a25));
+    clip-path:inset(0 0 100% 0); /* 下から上にリビール */
+    transition:clip-path 1.15s var(--ease-out-expo), transform .8s var(--ease-out-expo), filter .8s var(--ease-out-expo);
+  }
+  .card.is-visible .frame{ clip-path:inset(0 0 0% 0); }
+  .card:hover .frame{ transform:scale(1.06); filter:saturate(1.15); }
+  .card .cap{
+    position:absolute; left:14px; bottom:14px; color:#fff; font-size:12px;
+    letter-spacing:.05em; text-transform:uppercase; opacity:0;
+    transition:opacity .5s var(--ease-out-expo) .3s;
+  }
+  .card.is-visible .cap{ opacity:.85; }
+
+  footer{ padding:80px 32px; color:var(--muted); font-size:13px; }
+
+  @media (prefers-color-scheme: dark){
+    body{ background:#111; color:#f2efe9; }
+  }
+</style>
+</head>
+<body>
+
+  <!-- 常にDOMに残る持続ヘッダー -->
+  <nav class="nav">
+    <a class="logo" href="#home" data-page="home">Kin — Reproduction Demo</a>
+    <ul class="nav-links">
+      <li><a href="#home" data-page="home" class="active">Home</a></li>
+      <li><a href="#work" data-page="work">Work</a></li>
+      <li><a href="#journal" data-page="journal">Journal</a></li>
+    </ul>
+  </nav>
+
+  <div id="scroll-content">
+    <main id="page-content">
+
+      <section class="page active" id="page-home" data-page="home">
+        <div class="hero">
+          <h1>
+            <span class="split-line">Editorial motion,</span>
+            <span class="split-line">held with restraint.</span>
+          </h1>
+          <p>スクロールに重みを持たせ、画像はマスクで下から現れ、ページ遷移はヘッダーを保ったまま静かに切り替わる —— そんな「1枚の連続した面」の感覚を、依存ライブラリなしのバニラJSで再現したデモです。</p>
+        </div>
+        <div class="grid">
+          <div class="card" style="--c1:#c9b79c;--c2:#4a4030"><div class="frame"></div><span class="cap">Studio 01</span></div>
+          <div class="card" style="--c1:#a9b6a3;--c2:#2f3a2c"><div class="frame"></div><span class="cap">Studio 02</span></div>
+          <div class="card" style="--c1:#c4a79a;--c2:#3a2b26"><div class="frame"></div><span class="cap">Studio 03</span></div>
+          <div class="card" style="--c1:#a3aab6;--c2:#2b2f3a"><div class="frame"></div><span class="cap">Studio 04</span></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-work" data-page="work">
+        <div class="hero">
+          <h1><span class="split-line">Selected work.</span></h1>
+          <p>ページを切り替えてもナビゲーションは再生成されず、コンテンツだけがフェード+スライドで入れ替わります。ブラウザの「戻る」感を消し、1本のタイムラインとして体験させる手法です。</p>
+        </div>
+        <div class="grid">
+          <div class="card" style="--c1:#d8cdb8;--c2:#5b4f3b"><div class="frame"></div><span class="cap">Project A</span></div>
+          <div class="card" style="--c1:#b7c2c9;--c2:#2c3438"><div class="frame"></div><span class="cap">Project B</span></div>
+          <div class="card" style="--c1:#cbb3a6;--c2:#40291f"><div class="frame"></div><span class="cap">Project C</span></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-journal" data-page="journal">
+        <div class="hero">
+          <h1><span class="split-line">Journal.</span></h1>
+          <p>このセクションまでスクロールすると、見出しは1単語ずつ、カードは下から上へのクリップパスで現れます。IntersectionObserverだけで実装しており、GSAPなどのライブラリは使っていません。</p>
+        </div>
+        <div class="grid">
+          <div class="card" style="--c1:#c9c1a9;--c2:#3a3626"><div class="frame"></div><span class="cap">Note 01</span></div>
+          <div class="card" style="--c1:#b0a6c2;--c2:#2a2438"><div class="frame"></div><span class="cap">Note 02</span></div>
+        </div>
+        <footer>Reproduction demo — not affiliated with by-kin.com. Built for educational purposes.</footer>
+      </section>
+
+    </main>
+  </div>
+  <div id="scroll-spacer"></div>
+
+<script>
+/* =====================================================================
+   1) SmoothScroll
+   「本物の高さを持つ透明なspacer」でスクロールバーの長さを確保しつつ、
+   実際に表示しているコンテンツは position:fixed にして、
+   目標スクロール位置(target)へ current を毎フレーム lerp で近づけ、
+   その差分だけ translateY する。ease を小さくするほど「重い」動きになる。
+
+   使い方:
+     new SmoothScroll(document.getElementById('scroll-content'), {
+       spacer: document.getElementById('scroll-spacer'),
+       ease: 0.09
+     });
+   ページの高さが動的に変わる場合は smoothScroll.resize() を呼ぶこと。
+===================================================================== */
+class SmoothScroll {
+  constructor(contentEl, { spacer, ease = 0.09 } = {}) {
+    this.content = contentEl;
+    this.spacer = spacer;
+    this.ease = ease;
+    this.current = window.scrollY;
+    this.target = window.scrollY;
+    this.resize();
+    window.addEventListener('resize', () => this.resize());
+    this._tick = this._tick.bind(this);
+    requestAnimationFrame(this._tick);
+  }
+  resize() {
+    // spacerの高さ = 実コンテンツの高さ。これでネイティブスクロールバーが正しい長さになる。
+    this.spacer.style.height = this.content.scrollHeight + 'px';
+  }
+  _tick() {
+    this.target = window.scrollY;
+    this.current += (this.target - this.current) * this.ease;
+    if (Math.abs(this.target - this.current) < 0.05) this.current = this.target;
+    this.content.style.transform = `translate3d(0, ${-this.current}px, 0)`;
+    requestAnimationFrame(this._tick);
+  }
+}
+
+/* =====================================================================
+   2) SplitTextReveal
+   .split-line 要素のテキストを単語ごとに <span class="split-word"> へ分解し、
+   IntersectionObserver で画面に入ったら .is-visible を付与して
+   CSS transition(translateY + opacity)を発火させる。
+   単語ごとに transition-delay をずらしてスタッガー(段差)を作る。
+
+   使い方: HTMLに <span class="split-line">見出しテキスト</span> を書くだけ。
+   initSplitTextReveal() を呼べば自動で処理される。
+===================================================================== */
+function initSplitTextReveal() {
+  document.querySelectorAll('.split-line').forEach(line => {
+    const words = line.textContent.trim().split(/\s+/);
+    line.textContent = '';
+    words.forEach((word, i) => {
+      const span = document.createElement('span');
+      span.className = 'split-word';
+      span.style.transitionDelay = `${i * 60}ms`;
+      span.textContent = word + ' ';
+      line.appendChild(span);
+    });
+  });
+
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.4 });
+
+  document.querySelectorAll('.split-line').forEach(line => observer.observe(line));
+}
+
+/* =====================================================================
+   3) ImageRevealOnScroll
+   .card 要素が画面内に入ったタイミングで .is-visible を付与し、
+   CSSの clip-path: inset(0 0 100% 0) → inset(0 0 0% 0) の遷移で
+   「下から上にマスクが開いていく」画像リビールを作る。
+
+   使い方: <div class="card"><div class="frame"></div></div> を用意するだけ。
+===================================================================== */
+function initImageRevealOnScroll() {
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.2 });
+
+  document.querySelectorAll('.card').forEach(card => observer.observe(card));
+}
+
+/* =====================================================================
+   4) PersistentHeaderRouter
+   ナビのリンクをクリックすると、ヘッダー(nav)は一切再生成せず、
+   #page-content 内の .page 要素だけをフェードアウト→切替→フェードインする。
+   これにより「ページ全体がリロードされた感」を消し、
+   常に1枚の面の上でコンテンツだけが差し替わっているように見せる。
+
+   使い方:
+     <nav>...<a href="#work" data-page="work">Work</a>...</nav>
+     <section class="page" id="page-work" data-page="work">...</section>
+     initPersistentHeaderRouter();
+===================================================================== */
+function initPersistentHeaderRouter() {
+  const links = document.querySelectorAll('[data-page]');
+  const pages = document.querySelectorAll('.page');
+
+  function goTo(pageName) {
+    const current = document.querySelector('.page.active');
+    const next = document.getElementById(`page-${pageName}`);
+    if (!next || next === current) return;
+
+    document.querySelectorAll('.nav-links a').forEach(a => {
+      a.classList.toggle('active', a.dataset.page === pageName);
+    });
+
+    if (current) {
+      current.classList.add('page-transition-out');
+      current.addEventListener('animationend', () => {
+        current.classList.remove('active', 'page-transition-out');
+        window.scrollTo(0, 0);
+        next.classList.add('active', 'page-transition-in');
+        next.addEventListener('animationend', () => {
+          next.classList.remove('page-transition-in');
+        }, { once: true });
+      }, { once: true });
+    } else {
+      next.classList.add('active');
+    }
+  }
+
+  links.forEach(link => {
+    if (link.tagName !== 'A') return;
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      goTo(link.dataset.page);
+    });
+  });
+}
+
+/* --- 初期化 --- */
+window.addEventListener('DOMContentLoaded', () => {
+  const smoothScroll = new SmoothScroll(document.getElementById('scroll-content'), {
+    spacer: document.getElementById('scroll-spacer'),
+    ease: 0.09
+  });
+  initSplitTextReveal();
+  initImageRevealOnScroll();
+  initPersistentHeaderRouter();
+
+  // ページ切替でDOMの高さが変わるので、遷移完了後にspacerを再計算する
+  document.getElementById('page-content').addEventListener('animationend', () => {
+    smoothScroll.resize();
+  });
+});
+</script>
+</body>
+</html>
