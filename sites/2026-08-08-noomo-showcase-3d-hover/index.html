@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CRYSTAL HOVER — 3Dホバープレビュー & 慣性スムーススクロール 再現デモ</title>
+<meta name="description" content="Awwwards Site of the Day「Noomo Showcase」の表現技法(プロジェクト一覧のカーソル追従3Dプレビュー・慣性スムーススクロール・分割テキストリベール・グラスモーフィズムカード)を学習目的でオリジナル再現したデモ" />
+<style>
+  :root {
+    --bg: #020411;
+    --bg-2: #0a0e24;
+    --fg: #eef0ff;
+    --fg-dim: #8b90b8;
+    --accent: #3b4bff;
+    --accent-glow: rgba(59, 75, 255, .55);
+    --line: rgba(238, 240, 255, .12);
+    --ease: cubic-bezier(.16, 1, .3, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Arial, sans-serif;
+    cursor: none; /* 独自カーソルに置き換えるためOS標準カーソルは消す */
+  }
+  a { color: inherit; }
+  ::selection { background: var(--accent); color: #fff; }
+
+  /* ============================================================
+     0. カスタムカーソル(ドット + リング)
+     マウス座標に対して「ドット」は即座に、「リング」は少し遅れて
+     追従させることで、独特の残像感のあるカーソルにしている。
+     ============================================================ */
+  .cursor-dot, .cursor-ring {
+    position: fixed;
+    top: 0; left: 0;
+    pointer-events: none;
+    z-index: 9999;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    will-change: transform;
+  }
+  .cursor-dot {
+    width: 6px; height: 6px;
+    background: var(--fg);
+  }
+  .cursor-ring {
+    width: 36px; height: 36px;
+    border: 1px solid rgba(238, 240, 255, .5);
+    transition: width .3s var(--ease), height .3s var(--ease), border-color .3s var(--ease), background .3s var(--ease);
+  }
+  .cursor-ring.is-hover-row {
+    width: 96px; height: 96px;
+    border-color: transparent;
+    background: rgba(59, 75, 255, .12);
+  }
+  @media (hover: none), (pointer: coarse) {
+    /* タッチ端末では独自カーソルを無効化し、通常カーソルに戻す */
+    body { cursor: auto; }
+    .cursor-dot, .cursor-ring { display: none; }
+  }
+
+  header.nav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 26px clamp(20px, 4vw, 56px);
+    mix-blend-mode: difference;
+  }
+  .nav-logo { font-weight: 700; letter-spacing: .14em; font-size: 13px; }
+  .nav-links { display: flex; gap: 32px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+  .nav-links a { text-decoration: none; opacity: .7; transition: opacity .3s var(--ease); }
+  .nav-links a:hover { opacity: 1; }
+  @media (max-width: 640px) { .nav-links { display: none; } }
+
+  section { padding: clamp(90px, 16vh, 180px) clamp(20px, 6vw, 64px); position: relative; }
+
+  /* ============================================================
+     2. ヒーロー: 単語単位の分割テキストリベール
+     ============================================================ */
+  .hero { min-height: 100svh; display: flex; flex-direction: column; justify-content: center; }
+  .hero-eyebrow {
+    color: var(--accent);
+    font-size: 12px; letter-spacing: .22em; text-transform: uppercase;
+    margin: 0 0 22px;
+  }
+  .split-title {
+    margin: 0; font-weight: 700; letter-spacing: -.02em;
+    font-size: clamp(38px, 8vw, 96px); line-height: 1.02;
+  }
+  .split-title .word { display: inline-block; overflow: hidden; vertical-align: top; margin-right: .22em; }
+  .split-title .word span {
+    display: inline-block;
+    transform: translateY(115%);
+    transition: transform 1s var(--ease);
+    transition-delay: calc(var(--i) * 55ms);
+  }
+  .split-title.is-revealed .word span { transform: translateY(0); }
+  .hero-desc {
+    max-width: 46ch; margin: 32px 0 0; color: var(--fg-dim);
+    font-size: 15px; line-height: 1.8;
+    opacity: 0; transform: translateY(16px);
+    transition: opacity .9s var(--ease) .5s, transform .9s var(--ease) .5s;
+  }
+  .hero-desc.is-revealed { opacity: 1; transform: translateY(0); }
+
+  .section-heading {
+    font-size: 12px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--fg-dim); margin: 0 0 40px;
+  }
+
+  /* ============================================================
+     3. プロジェクト一覧: 行にホバーすると3Dクリスタルがカーソルに追従
+     ============================================================ */
+  .project-row {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 30px 4px; border-top: 1px solid var(--line);
+    text-decoration: none; color: var(--fg);
+    position: relative;
+  }
+  .project-list .project-row:last-child { border-bottom: 1px solid var(--line); }
+  .project-row .p-name {
+    font-size: clamp(24px, 4vw, 44px); font-weight: 600;
+    transition: transform .5s var(--ease), color .5s var(--ease);
+  }
+  .project-row .p-meta {
+    display: flex; gap: 28px; font-size: 12px; letter-spacing: .08em;
+    color: var(--fg-dim); text-transform: uppercase;
+  }
+  .project-row:hover .p-name { transform: translateX(18px); color: var(--accent); }
+  .project-row:hover { background: linear-gradient(90deg, rgba(59,75,255,.06), transparent); }
+
+  /* カーソル追従の3Dプレビューキャンバス */
+  #crystal-preview {
+    position: fixed; top: 0; left: 0;
+    width: 200px; height: 200px;
+    margin: -100px 0 0 -100px; /* カーソル座標を中心に置く */
+    pointer-events: none; z-index: 400;
+    opacity: 0;
+    transition: opacity .35s var(--ease);
+  }
+  #crystal-preview.is-active { opacity: 1; }
+
+  /* ============================================================
+     4. グラスモーフィズムのケイパビリティカード(スクロールで出現)
+     ============================================================ */
+  .card-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 18px;
+  }
+  .glass-card {
+    padding: 28px 24px; border-radius: 18px;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid rgba(255, 255, 255, .08);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    opacity: 0; transform: translateY(36px);
+    transition: opacity .8s var(--ease), transform .8s var(--ease), border-color .4s var(--ease), box-shadow .4s var(--ease);
+  }
+  .glass-card.is-visible { opacity: 1; transform: translateY(0); }
+  .glass-card:hover {
+    border-color: rgba(59, 75, 255, .5);
+    box-shadow: 0 0 40px -12px var(--accent-glow);
+  }
+  .glass-card h3 { margin: 0 0 10px; font-size: 16px; }
+  .glass-card p { margin: 0; color: var(--fg-dim); font-size: 13px; line-height: 1.7; }
+
+  footer { padding: 60px clamp(20px, 6vw, 64px) 90px; color: var(--fg-dim); font-size: 12px; }
+</style>
+</head>
+<body>
+
+  <!-- 独自カーソル(実カーソルは非表示、body { cursor: none } で代替) -->
+  <div class="cursor-dot" id="cursorDot"></div>
+  <div class="cursor-ring" id="cursorRing"></div>
+
+  <header class="nav">
+    <div class="nav-logo">CRYSTAL<span style="color:var(--accent)">.</span>HOVER</div>
+    <nav class="nav-links">
+      <a href="#work">Work</a>
+      <a href="#about">About</a>
+      <a href="#contact">Contact</a>
+    </nav>
+  </header>
+
+  <!-- カーソル追従の3Dクリスタルプレビュー(ホバー中のみ表示) -->
+  <canvas id="crystal-preview" width="200" height="200"></canvas>
+
+  <div id="smooth-content">
+    <main>
+      <section class="hero">
+        <p class="hero-eyebrow">Digital Craft / Immersive Web</p>
+        <h1 class="split-title" id="heroTitle">
+          <span class="word"><span>Motion</span></span>
+          <span class="word"><span>as</span></span>
+          <span class="word"><span>Material.</span></span>
+        </h1>
+        <p class="hero-desc" id="heroDesc">
+          プロジェクト一覧にカーソルを重ねると、ワイヤーフレームの3Dオブジェクトがカーソルを追いかけながら現れます。
+          スクロールには慣性を持たせ、テキストは画面に入るたびに一語ずつ立ち上がります。
+        </p>
+      </section>
+
+      <section id="work">
+        <p class="section-heading">Selected Work — 01</p>
+        <div class="project-list">
+          <a class="project-row" href="#" data-year="2024" data-tags="WebGL, Brand">
+            <span class="p-name">Aurora Systems</span>
+            <span class="p-meta"><span>2024</span><span>WebGL / Brand</span></span>
+          </a>
+          <a class="project-row" href="#" data-year="2024" data-tags="3D, Motion">
+            <span class="p-name">Nordkap Studio</span>
+            <span class="p-meta"><span>2024</span><span>3D / Motion</span></span>
+          </a>
+          <a class="project-row" href="#" data-year="2023" data-tags="Interactive">
+            <span class="p-name">Fieldnote Labs</span>
+            <span class="p-meta"><span>2023</span><span>Interactive</span></span>
+          </a>
+          <a class="project-row" href="#" data-year="2023" data-tags="E-commerce">
+            <span class="p-name">Vantage Retail</span>
+            <span class="p-meta"><span>2023</span><span>E-commerce</span></span>
+          </a>
+          <a class="project-row" href="#" data-year="2022" data-tags="WebGL, Data">
+            <span class="p-name">Halcyon Data</span>
+            <span class="p-meta"><span>2022</span><span>WebGL / Data</span></span>
+          </a>
+        </div>
+      </section>
+
+      <section id="about">
+        <p class="section-heading">Capabilities — 02</p>
+        <div class="card-grid">
+          <div class="glass-card"><h3>3D &amp; WebGL</h3><p>カーソルやスクロールに反応するワイヤーフレーム/シェーダー表現で、プロダクトの世界観を空間的に伝える。</p></div>
+          <div class="glass-card"><h3>Motion Design</h3><p>分割テキストリベールやイージングにこだわったマイクロインタラクションで、情報の出現順に意味を持たせる。</p></div>
+          <div class="glass-card"><h3>Smooth Scroll</h3><p>ネイティブスクロールに慣性(ラグ)を足すことで、コンテンツの切り替わりに「重さ」と「気持ちよさ」を両立させる。</p></div>
+          <div class="glass-card"><h3>Interaction Design</h3><p>ホバー・クリックといった細部の反応速度と質感を設計し、サイト全体の触感を統一する。</p></div>
+        </div>
+      </section>
+
+      <footer id="contact">
+        <p>© 2026 Crystal Hover — 学習用再現デモ。実在サイトのソースコードは使用していません。</p>
+      </footer>
+    </main>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ============================================================
+   * 1. カスタムカーソル
+   *   dot: マウス座標にそのまま追従(高速)
+   *   ring: lerp(線形補間)でワンテンポ遅れて追従(なめらかな残像)
+   * ============================================================ */
+  function initCustomCursor() {
+    const dot = document.getElementById("cursorDot");
+    const ring = document.getElementById("cursorRing");
+    const mouse = { x: innerWidth / 2, y: innerHeight / 2 };
+    const ringPos = { x: mouse.x, y: mouse.y };
+
+    addEventListener("mousemove", (e) => {
+      mouse.x = e.clientX;
+      mouse.y = e.clientY;
+      dot.style.transform = `translate(${mouse.x}px, ${mouse.y}px) translate(-50%, -50%)`;
+    });
+
+    // ホバー可能な要素の上ではリングを拡大する
+    document.querySelectorAll("a, button").forEach((el) => {
+      el.addEventListener("mouseenter", () => ring.classList.add("is-hover-row"));
+      el.addEventListener("mouseleave", () => ring.classList.remove("is-hover-row"));
+    });
+
+    (function tick() {
+      ringPos.x += (mouse.x - ringPos.x) * 0.15;
+      ringPos.y += (mouse.y - ringPos.y) * 0.15;
+      ring.style.transform = `translate(${ringPos.x}px, ${ringPos.y}px) translate(-50%, -50%)`;
+      requestAnimationFrame(tick);
+    })();
+
+    return mouse; // 他の演出(3Dプレビューなど)からマウス座標を再利用できるよう返す
+  }
+
+  /* ============================================================
+   * 2. 慣性スムーススクロール
+   *   ホイール入力(deltaY)を毎回そのまま反映するのではなく、
+   *   「目標スクロール位置(target)」に積み立てておき、
+   *   実際の scrollTo() は毎フレーム lerp(線形補間)で
+   *   targetへ少しずつ近づけながら呼び出す。
+   *   これにより、指を止めても少し動き続ける「慣性」の感触が出る。
+   *
+   *   注意: position:fixed + transform でコンテンツごとズラす実装も
+   *   よく見かけるが、それだと getBoundingClientRect() や
+   *   scrollIntoView() の挙動がページ内の他の処理とズレやすい。
+   *   ここでは要素は普通の文書フローに置いたまま、
+   *   window.scrollTo() で「本物のスクロール位置」自体を
+   *   なめらかに動かす方式にしている(実装は増えるが安全)。
+   *
+   *   ポイントは「ホイール操作があった時だけループを回す」こと。
+   *   常時 scrollTo() を呼び続けると、アンカーリンクのクリックや
+   *   スクロールバーのドラッグ、キーボード操作(PageDown等)による
+   *   ブラウザ本来のスクロールを毎フレーム上書きして邪魔してしまう。
+   *   目標値に収束したらループを止めてページに制御を返し、
+   *   それ以外の操作は素通りさせることで、この衝突を避けている。
+   * ============================================================ */
+  function initSmoothScroll(opts) {
+    const lerpFactor = (opts && opts.lerp) || 0.09;
+    let target = window.scrollY;
+    let current = target;
+    let rafId = null;
+
+    function maxScroll() {
+      return document.documentElement.scrollHeight - innerHeight;
+    }
+
+    function loop() {
+      current += (target - current) * lerpFactor;
+      if (Math.abs(target - current) < 0.5) {
+        current = target;
+        window.scrollTo(0, current);
+        rafId = null; // 収束したのでループを止める(通常スクロールに制御を戻す)
+        return;
+      }
+      window.scrollTo(0, current);
+      rafId = requestAnimationFrame(loop);
+    }
+
+    addEventListener("wheel", (e) => {
+      e.preventDefault();
+      target = Math.max(0, Math.min(target + e.deltaY, maxScroll()));
+      if (rafId === null) rafId = requestAnimationFrame(loop);
+    }, { passive: false });
+
+    // ループが止まっている間(=ホイールで動かしていない間)の実スクロールは
+    // アンカーリンクやキーボードによるものなので、次のホイール操作に備えて
+    // target/currentをその位置に合わせておくだけで、動きには介入しない
+    addEventListener("scroll", () => {
+      if (rafId === null) target = current = window.scrollY;
+    });
+
+    addEventListener("resize", () => {
+      target = Math.min(target, maxScroll());
+    });
+  }
+
+  /* ============================================================
+   * 3. 分割テキストリベール(単語単位)
+   *   HTML側で <span class="word"><span>単語</span></span> の
+   *   二重span構造にしておき、外側でoverflow:hidden、内側を
+   *   translateYさせることで「下から立ち上がる」演出を作る。
+   *   CSS変数 --i に出現順を渡し、transition-delayで時差をつける。
+   * ============================================================ */
+  function initSplitReveal(titleEl, descEl) {
+    const words = titleEl.querySelectorAll(".word");
+    words.forEach((w, i) => w.style.setProperty("--i", i));
+    requestAnimationFrame(() => {
+      titleEl.classList.add("is-revealed");
+      descEl.classList.add("is-revealed");
+    });
+  }
+
+  /* ============================================================
+   * 4. スクロールで出現するグラスモーフィズムカード
+   * ============================================================ */
+  function initScrollReveal(selector) {
+    const items = document.querySelectorAll(selector);
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-visible");
+          io.unobserve(entry.target); // 1回出現したら監視を止める
+        }
+      });
+    }, { threshold: 0.2 });
+    items.forEach((el) => io.observe(el));
+  }
+
+  /* ============================================================
+   * 5. 3Dワイヤーフレーム・クリスタル(正二十面体)
+   *   外部ライブラリなしで「頂点座標の回転・投影」を素朴に実装する。
+   *   - VERTS: 正二十面体の12頂点(黄金比 φ を使った標準的な座標)
+   *   - FACES: 20枚の三角形面。辺(エッジ)はFACESから重複排除して生成する
+   *   - rotate(): X軸→Y軸の順に頂点を回転
+   *   - project(): 簡易パースペティブ投影で3D座標を2Dに変換
+   * ============================================================ */
+  function createIcosahedron() {
+    const phi = (1 + Math.sqrt(5)) / 2;
+    const VERTS = [
+      [-1, phi, 0], [1, phi, 0], [-1, -phi, 0], [1, -phi, 0],
+      [0, -1, phi], [0, 1, phi], [0, -1, -phi], [0, 1, -phi],
+      [phi, 0, -1], [phi, 0, 1], [-phi, 0, -1], [-phi, 0, 1]
+    ];
+    const FACES = [
+      [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+      [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+      [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+      [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]
+    ];
+    // 面リストから「頂点ペア」を重複なく取り出してエッジ一覧を作る
+    const edgeSet = new Set();
+    const EDGES = [];
+    FACES.forEach(([a, b, c]) => {
+      [[a, b], [b, c], [c, a]].forEach(([p, q]) => {
+        const key = p < q ? `${p}-${q}` : `${q}-${p}`;
+        if (!edgeSet.has(key)) { edgeSet.add(key); EDGES.push([p, q]); }
+      });
+    });
+    return { VERTS, EDGES };
+  }
+
+  function rotatePoint([x, y, z], angleX, angleY) {
+    const cosX = Math.cos(angleX), sinX = Math.sin(angleX);
+    const y1 = y * cosX - z * sinX;
+    const z1 = y * sinX + z * cosX;
+    const cosY = Math.cos(angleY), sinY = Math.sin(angleY);
+    const x2 = x * cosY + z1 * sinY;
+    const z2 = -x * sinY + z1 * cosY;
+    return [x2, y1, z2];
+  }
+
+  function drawCrystal(ctx, size, model, angle) {
+    const { VERTS, EDGES } = model;
+    const cx = size / 2, cy = size / 2;
+    const scale = size * 0.9;
+    const focal = 4; // カメラ距離。小さいほどパースが強くつく
+
+    ctx.clearRect(0, 0, size, size);
+    const projected = VERTS.map((v) => {
+      const [x, y, z] = rotatePoint(v, angle.x, angle.y);
+      const factor = scale / (focal + z);
+      return [cx + x * factor, cy + y * factor, z];
+    });
+
+    ctx.lineWidth = 1.4;
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = "rgba(59, 75, 255, .9)";
+    ctx.strokeStyle = "rgba(150, 165, 255, .9)";
+    ctx.beginPath();
+    EDGES.forEach(([a, b]) => {
+      ctx.moveTo(projected[a][0], projected[a][1]);
+      ctx.lineTo(projected[b][0], projected[b][1]);
+    });
+    ctx.stroke();
+  }
+
+  /* ============================================================
+   * 6. プロジェクト行 ホバー連動の3Dプレビュー
+   *   ・カーソル座標を lerp で追いかけて自然な追従感を出す
+   *   ・行にカーソルが乗っている間だけ opacity を上げて表示
+   *   ・rAFループは常時回し、回転だけは常に進める
+   * ============================================================ */
+  function initProjectHoverCrystal(mouse) {
+    const canvas = document.getElementById("crystal-preview");
+    const ctx = canvas.getContext("2d");
+    const model = createIcosahedron();
+    const pos = { x: mouse.x, y: mouse.y };
+    const angle = { x: 0, y: 0 };
+    let isActive = false;
+
+    document.querySelectorAll(".project-row").forEach((row) => {
+      row.addEventListener("mouseenter", () => {
+        isActive = true;
+        canvas.classList.add("is-active");
+      });
+      row.addEventListener("mouseleave", () => {
+        isActive = false;
+        canvas.classList.remove("is-active");
+      });
+    });
+
+    (function tick() {
+      pos.x += (mouse.x - pos.x) * 0.18;
+      pos.y += (mouse.y - pos.y) * 0.18;
+      canvas.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
+
+      angle.x += 0.006;
+      angle.y += isActive ? 0.018 : 0.004; // ホバー中は回転を速める
+      drawCrystal(ctx, canvas.width, model, angle);
+
+      requestAnimationFrame(tick);
+    })();
+  }
+
+  /* ---- 初期化 ---- */
+  const mouse = initCustomCursor();
+  initSmoothScroll({ lerp: 0.09 });
+  initSplitReveal(document.getElementById("heroTitle"), document.getElementById("heroDesc"));
+  initScrollReveal(".glass-card");
+  initProjectHoverCrystal(mouse);
+})();
+</script>
+</body>
+</html>
