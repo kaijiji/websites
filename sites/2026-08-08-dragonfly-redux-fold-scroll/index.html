@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fold Scroll Demo — Dragonfly Redux 風 表現デモ</title>
+<style>
+  :root{
+    --ink:#000000;
+    --flame:#FA4C14;
+    --paper:#F4F1EC;
+    --ease: cubic-bezier(.16,1,.3,1);
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--ink); color:var(--paper);
+    font-family:-apple-system,"Hiragino Kaku Gothic ProN","Helvetica Neue",Arial,sans-serif;
+    overscroll-behavior:none;
+  }
+
+  /* ------------------------------------------------------------------
+   * レイヤー構成
+   * 1) #bg-layer      : 画面全体に固定された背景色レイヤー(スクロールでクロスフェード)
+   * 2) #smooth-wrapper: position:fixed の「窓」。中身がはみ出た分は overflow:hidden で隠す
+   * 3) #smooth-content: 実際のセクション(fold-panel)を縦に並べた本体。JSでtranslateYされる
+   * 4) #scroll-spacer : 本物のスクロールバーを生成するためだけの空div(高さ=contentの高さ)
+   * ------------------------------------------------------------------ */
+  #bg-layer{
+    position:fixed; inset:0; z-index:0;
+    background:var(--ink);
+    transition:none;
+  }
+  #smooth-wrapper{
+    position:fixed; inset:0;
+    overflow:hidden;
+    z-index:1;
+  }
+  #smooth-content{
+    position:relative;
+    will-change:transform;
+  }
+  #scroll-spacer{
+    position:relative;
+    z-index:-1;
+    visibility:hidden;
+  }
+
+  .fold-panel{
+    position:relative;
+    height:100vh;
+    width:100%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:6vw;
+    overflow:hidden;
+    /* clip-path は initFoldScroll() が毎フレーム書き換える */
+  }
+  .fold-panel .panel-inner{
+    max-width:900px;
+    transform:translateY(40px);
+    opacity:0;
+    transition:transform .1s linear, opacity .1s linear;
+  }
+  .fold-panel .eyebrow{
+    display:block;
+    font-size:.8rem;
+    letter-spacing:.3em;
+    text-transform:uppercase;
+    color:var(--flame);
+    margin-bottom:1.2rem;
+  }
+  .fold-panel h2{
+    font-size:clamp(2.2rem,7vw,5.5rem);
+    line-height:1.02;
+    margin:0 0 1rem;
+    font-weight:700;
+    letter-spacing:-.02em;
+  }
+  .fold-panel p{
+    font-size:1.05rem;
+    line-height:1.7;
+    max-width:38ch;
+    opacity:.8;
+  }
+  .panel-index{
+    position:absolute;
+    top:6vw; right:6vw;
+    font-size:.85rem;
+    letter-spacing:.2em;
+    opacity:.55;
+  }
+
+  /* パネルごとの前景色(奇数=黒地に白文字、偶数=フレイム地に黒文字) */
+  .fold-panel.tone-dark{ color:var(--paper); }
+  .fold-panel.tone-flame{ color:var(--ink); }
+  .fold-panel.tone-flame .eyebrow{ color:var(--ink); opacity:.6; }
+
+  /* --- カスタムカーソル(マウスに遅れて追従するドット) --- */
+  #cursor-dot{
+    position:fixed; top:0; left:0;
+    width:14px; height:14px;
+    margin:-7px 0 0 -7px;
+    border-radius:50%;
+    background:var(--flame);
+    pointer-events:none;
+    z-index:50;
+    mix-blend-mode:difference;
+  }
+
+  /* --- マグネティックボタン --- */
+  .magnetic-btn{
+    position:relative;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    padding:1.1rem 2.4rem;
+    margin-top:2rem;
+    border:1px solid currentColor;
+    border-radius:999px;
+    font-size:.95rem;
+    letter-spacing:.05em;
+    text-decoration:none;
+    color:inherit;
+    cursor:pointer;
+    background:transparent;
+    transition:background .25s var(--ease), color .25s var(--ease);
+  }
+  .fold-panel.tone-dark .magnetic-btn:hover{ background:var(--paper); color:var(--ink); }
+  .fold-panel.tone-flame .magnetic-btn:hover{ background:var(--ink); color:var(--flame); }
+
+  #progress-rail{
+    position:fixed; right:20px; top:50%; transform:translateY(-50%);
+    z-index:30;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  #progress-rail span{
+    width:6px; height:6px; border-radius:50%;
+    background:rgba(244,241,236,.35);
+    transition:background .2s, transform .2s;
+  }
+  #progress-rail span.active{
+    background:var(--flame);
+    transform:scale(1.6);
+  }
+
+  @media (hover:none){ #cursor-dot{ display:none; } }
+</style>
+</head>
+<body>
+
+<div id="bg-layer"></div>
+
+<div id="progress-rail"></div>
+<div id="cursor-dot"></div>
+
+<div id="smooth-wrapper">
+  <div id="smooth-content">
+
+    <section class="fold-panel tone-dark" data-bg="#000000">
+      <span class="panel-index">01 / 05</span>
+      <div class="panel-inner">
+        <span class="eyebrow">Fold Scroll Study</span>
+        <h2>スクロールで<br>幕が開く。</h2>
+        <p>下にスクロールすると、各セクションが舞台の緞帳(どんちょう)のように斜めの折り目を伴って開いていきます。これは実在サイトのコードではなく、その仕組みを解釈してゼロから書いたデモです。</p>
+        <a class="magnetic-btn" data-magnetic href="#">Scroll ↓</a>
+      </div>
+    </section>
+
+    <section class="fold-panel tone-flame" data-bg="#FA4C14">
+      <span class="panel-index">02 / 05</span>
+      <div class="panel-inner">
+        <span class="eyebrow">Technique 01</span>
+        <h2>Lerpで<br>なめらかに追従。</h2>
+        <p>実際のスクロール位置(target)を毎フレーム少しずつ現在値(current)に近づける「線形補間(lerp)」によって、慣性のあるなめらかなスクロールを実現しています。</p>
+        <a class="magnetic-btn" data-magnetic href="#">Next</a>
+      </div>
+    </section>
+
+    <section class="fold-panel tone-dark" data-bg="#000000">
+      <span class="panel-index">03 / 05</span>
+      <div class="panel-inner">
+        <span class="eyebrow">Technique 02</span>
+        <h2>clip-pathで<br>折り目を演出。</h2>
+        <p>各セクションが画面下から入ってくる進捗(0〜1)を計算し、その値を clip-path: polygon() の座標に反映することで、片側から開いていく紙の折り目のような視覚効果を作っています。</p>
+        <a class="magnetic-btn" data-magnetic href="#">Next</a>
+      </div>
+    </section>
+
+    <section class="fold-panel tone-flame" data-bg="#FA4C14">
+      <span class="panel-index">04 / 05</span>
+      <div class="panel-inner">
+        <span class="eyebrow">Technique 03</span>
+        <h2>背景色が<br>連続的に切り替わる。</h2>
+        <p>全体の進捗率にあわせて背景レイヤーの色を線形補間しています。セクションの境目で色がパッと切り替わるのではなく、じわっとクロスフェードするのがポイントです。</p>
+        <a class="magnetic-btn" data-magnetic href="#">Next</a>
+      </div>
+    </section>
+
+    <section class="fold-panel tone-dark" data-bg="#000000">
+      <span class="panel-index">05 / 05</span>
+      <div class="panel-inner">
+        <span class="eyebrow">Technique 04</span>
+        <h2>マグネティック<br>ボタン。</h2>
+        <p>ボタンにカーソルを近づけると、カーソル位置に吸い寄せられるように少しだけ動きます。離れると元の位置になめらかに戻ります。</p>
+        <a class="magnetic-btn" data-magnetic href="#">Back to top ↑</a>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div id="scroll-spacer"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+  const hexToRgb = (hex) => {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const rgbToCss = (rgb) => `rgb(${rgb[0] | 0}, ${rgb[1] | 0}, ${rgb[2] | 0})`;
+
+  /**
+   * initSmoothScroll(contentEl, spacerEl, opts)
+   * ----------------------------------------------
+   * Lenis のような「なめらかスクロール」の簡易再現。
+   * - contentEl は position:fixed の親(overflow:hidden)の中に置く
+   * - spacerEl の高さを contentEl の実際の高さに合わせて、本物のスクロールバーを作る
+   * - 毎フレーム、実スクロール位置(target)へ現在値(current)を lerp で近づけ、
+   *   contentEl に translateY として反映する
+   *
+   * 他のプロジェクトで使う場合は、そのままコピーして
+   *   const smooth = initSmoothScroll(contentEl, spacerEl, { ease: 0.085 });
+   *   smooth.onUpdate(current => { ...currentを使った演出... });
+   * のように呼び出せます。
+   */
+  function initSmoothScroll(contentEl, spacerEl, opts = {}) {
+    const ease = opts.ease ?? 0.09;
+    let current = 0;
+    let target = 0;
+    const listeners = [];
+
+    function resize() {
+      spacerEl.style.height = contentEl.scrollHeight + 'px';
+    }
+
+    function onScroll() {
+      target = window.scrollY;
+    }
+
+    function raf() {
+      current = lerp(current, target, ease);
+      // 0.05px 未満の差は切り上げて完全停止させる(無限にRAFが回り続けるのを防ぐ)
+      if (Math.abs(target - current) < 0.05) current = target;
+      contentEl.style.transform = `translate3d(0, ${-current}px, 0)`;
+      listeners.forEach(fn => fn(current, target));
+      requestAnimationFrame(raf);
+    }
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', resize);
+    resize();
+    onScroll();
+    requestAnimationFrame(raf);
+
+    return {
+      onUpdate(fn) { listeners.push(fn); },
+      recalc: resize,
+    };
+  }
+
+  /**
+   * initFoldReveal(panels)
+   * ----------------------------------------------
+   * 各 .fold-panel が画面(ビューポート)を通過する進捗(0〜1)を
+   * getBoundingClientRect() から求め、clip-path の折り目アニメーションと
+   * 中身のフェードイン/アウトに変換する。
+   * GSAP ScrollTrigger の scrub オプションと同じ考え方を、
+   * 外部ライブラリなしで実装したもの。
+   */
+  function initFoldReveal(panels, skewPercent = 10) {
+    return function update() {
+      const vh = window.innerHeight;
+      panels.forEach(panel => {
+        const rect = panel.getBoundingClientRect();
+        // rect.top が vh のとき progress=0(まだ画面下に隠れている)
+        // rect.top が 0 のとき progress=1(画面上端に到達=完全に開く)
+        const progress = clamp(1 - rect.top / vh, 0, 1);
+
+        const topLeft = 100 - progress * 100;
+        const topRight = clamp(topLeft + skewPercent * (1 - progress), 0, 100);
+        panel.style.clipPath =
+          `polygon(0% ${topLeft}%, 100% ${topRight}%, 100% 100%, 0% 100%)`;
+
+        const inner = panel.querySelector('.panel-inner');
+        if (inner) {
+          inner.style.opacity = progress;
+          inner.style.transform = `translateY(${(1 - progress) * 40}px)`;
+        }
+      });
+    };
+  }
+
+  /**
+   * initBackgroundCrossfade(bgEl, panels)
+   * ----------------------------------------------
+   * 画面の中心に最も近いパネルの data-bg 色へ向けて、
+   * 背景レイヤーの色を毎フレーム lerp で近づける。
+   * セクションの切り替わりが色のクロスフェードになる。
+   */
+  function initBackgroundCrossfade(bgEl, panels) {
+    let currentRgb = hexToRgb(panels[0].dataset.bg);
+    return function update() {
+      const vh = window.innerHeight;
+      let closest = panels[0];
+      let closestDist = Infinity;
+      panels.forEach(panel => {
+        const rect = panel.getBoundingClientRect();
+        const dist = Math.abs(rect.top + rect.height / 2 - vh / 2);
+        if (dist < closestDist) { closestDist = dist; closest = panel; }
+      });
+      const targetRgb = hexToRgb(closest.dataset.bg);
+      currentRgb = currentRgb.map((c, i) => lerp(c, targetRgb[i], 0.08));
+      bgEl.style.background = rgbToCss(currentRgb);
+      return closest;
+    };
+  }
+
+  /**
+   * initMagnetic(el, strength)
+   * ----------------------------------------------
+   * マウスがボタンの近くにあるとき、カーソル方向へわずかに引き寄せられる
+   * 「マグネティックボタン」効果。離れると transform をリセット。
+   */
+  function initMagnetic(el, strength = 0.4) {
+    el.addEventListener('mousemove', (e) => {
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - (rect.left + rect.width / 2);
+      const y = e.clientY - (rect.top + rect.height / 2);
+      el.style.transform = `translate(${x * strength}px, ${y * strength}px)`;
+    });
+    el.addEventListener('mouseleave', () => {
+      el.style.transform = 'translate(0, 0)';
+    });
+  }
+
+  /**
+   * initCursorDot(dotEl)
+   * ----------------------------------------------
+   * カーソル位置に少し遅れて追従する円。lerpで滑らかさを出す。
+   */
+  function initCursorDot(dotEl) {
+    let mx = window.innerWidth / 2, my = window.innerHeight / 2;
+    let cx = mx, cy = my;
+    window.addEventListener('mousemove', (e) => { mx = e.clientX; my = e.clientY; });
+    (function raf() {
+      cx = lerp(cx, mx, 0.18);
+      cy = lerp(cy, my, 0.18);
+      dotEl.style.transform = `translate3d(${cx}px, ${cy}px, 0)`;
+      requestAnimationFrame(raf);
+    })();
+  }
+
+  /**
+   * initProgressRail(railEl, panels)
+   * ----------------------------------------------
+   * 右端に現在アクティブなセクションを示すドットのインジケーターを作る。
+   */
+  function initProgressRail(railEl, panels) {
+    panels.forEach((_, i) => {
+      const dot = document.createElement('span');
+      dot.dataset.i = i;
+      railEl.appendChild(dot);
+    });
+    const dots = [...railEl.children];
+    return function setActive(panel) {
+      const idx = panels.indexOf(panel);
+      dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+    };
+  }
+
+  // ------------------------------------------------------------------
+  // 初期化
+  // ------------------------------------------------------------------
+  const contentEl = document.getElementById('smooth-content');
+  const spacerEl = document.getElementById('scroll-spacer');
+  const bgEl = document.getElementById('bg-layer');
+  const panels = [...document.querySelectorAll('.fold-panel')];
+
+  const smooth = initSmoothScroll(contentEl, spacerEl, { ease: 0.09 });
+  const updateFold = initFoldReveal(panels, 10);
+  const updateBg = initBackgroundCrossfade(bgEl, panels);
+  const setActiveDot = initProgressRail(document.getElementById('progress-rail'), panels);
+
+  smooth.onUpdate(() => {
+    updateFold();
+    const closest = updateBg();
+    setActiveDot(closest);
+  });
+
+  document.querySelectorAll('[data-magnetic]').forEach(el => initMagnetic(el, 0.35));
+  initCursorDot(document.getElementById('cursor-dot'));
+
+  // "Back to top" / "Scroll" ボタンはページ内リンクの代わりにスクロール位置を直接動かす
+  document.querySelectorAll('.magnetic-btn').forEach((btn, i) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const targets = panels.map(p => p.offsetTop);
+      const next = i === panels.length - 1 ? 0 : targets[i + 1];
+      window.scrollTo({ top: next, behavior: 'smooth' });
+    });
+  });
+})();
+</script>
+</body>
+</html>
