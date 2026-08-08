@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audiovisual Timeline Demo</title>
+<style>
+  /* =====================================================================
+     再現デモ: 「マウスを動かすとUIが現れる、映像フルスクリーン + 横スクロール
+     タイムライン」型のオーディオビジュアル・アルバムサイト
+     参照元: Önnu Jónu Son (https://onnujonuson.com/) — 制作: Nolie / Ueno
+     ※このファイルは対象サイトのコード・画像・映像・楽曲名を一切含みません。
+       観察した「仕組み」を独自に実装したオリジナルコードです。
+       映像素材の代わりに Canvas で毎フレーム描画する抽象的な「フィルム風」
+       アニメーションを使い、実写映像なしで同じ体験構造を再現しています。
+     ===================================================================== */
+  :root{
+    --accent: #e2582c;
+    --bg: #0a0a0a;
+    --fg: #f4f1ea;
+    --ui-fade: 480ms;
+    color-scheme: dark;
+  }
+  *{ box-sizing: border-box; }
+  html, body{
+    margin:0; padding:0; width:100%; height:100%;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "Hiragino Sans", "Helvetica Neue", Arial, sans-serif;
+    overflow: hidden;
+    cursor: default;
+  }
+
+  /* 背景いっぱいに広がる「映像レイヤー」(Canvas)。実際のサイトではここが
+     曲ごとのショートフィルムになる。ここでは色相(hue)だけを曲ごとに変え、
+     滑らかに移り変わる抽象アニメーションで代替している。 */
+  #film{
+    position: fixed; inset: 0; width:100%; height:100%; display:block;
+    z-index: 0;
+  }
+
+  /* 画面全体に薄いビネットとグレインを重ねてシネマティックな質感を足す */
+  #vignette{
+    position: fixed; inset: 0; z-index: 1; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,.65) 100%);
+  }
+
+  /* ---- UI レイヤー。既定では半透明で「休んで」おり、
+     マウスが動く/タップされると現れ、無操作が続くとまたフェードアウトする ---- */
+  .ui{
+    position: fixed; inset: 0; z-index: 2;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: clamp(16px, 3vw, 40px);
+    pointer-events: none; /* 個々の操作要素だけ pointer-events を戻す */
+    opacity: 1;
+    transition: opacity var(--ui-fade) ease;
+  }
+  body.ui-hidden .ui{ opacity: 0; }
+  body.ui-hidden{ cursor: none; }
+
+  .top-row{
+    display:flex; justify-content: space-between; align-items:flex-start;
+    gap: 16px;
+  }
+  .brand{
+    font-size: 12px; letter-spacing: .18em; text-transform: uppercase;
+    opacity: .8;
+  }
+  .now-playing{
+    text-align: right;
+  }
+  .now-playing .track-index{
+    font-size: 11px; letter-spacing: .14em; opacity: .6;
+  }
+  .now-playing .track-title{
+    font-size: clamp(20px, 3vw, 34px);
+    margin: 2px 0 0;
+    font-weight: 600;
+    color: var(--accent);
+    transition: color 600ms ease;
+  }
+
+  /* ---- 下部: 横スクロールするタイムライン(トラック一覧) ---- */
+  .timeline-wrap{
+    pointer-events: auto;
+  }
+  .timeline-label{
+    font-size: 11px; letter-spacing: .14em; opacity: .55; margin-bottom: 10px;
+  }
+  .timeline{
+    display:flex; gap: 10px;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    padding-bottom: 10px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .timeline::-webkit-scrollbar{ height: 4px; }
+  .timeline::-webkit-scrollbar-thumb{ background: rgba(244,241,234,.25); border-radius: 2px; }
+
+  .track{
+    scroll-snap-align: start;
+    flex: none;
+    width: 116px;
+    cursor: pointer;
+    border: none; background: none; padding: 0;
+    color: var(--fg); text-align: left;
+    opacity: .55;
+    transition: opacity 300ms ease, transform 300ms ease;
+  }
+  .track:hover{ opacity: .85; }
+  .track.active{ opacity: 1; }
+  .track .thumb{
+    width: 100%; height: 64px; border-radius: 6px;
+    overflow: hidden; position: relative;
+    background: #111;
+    border: 1px solid rgba(244,241,234,.15);
+  }
+  .track.active .thumb{ border-color: var(--accent); }
+  .track .thumb canvas{ width:100%; height:100%; display:block; }
+  .track .meta{
+    display:flex; justify-content:space-between; align-items:baseline;
+    margin-top: 6px; font-size: 11px;
+  }
+  .track .meta .n{ opacity: .5; }
+  .track .progress{
+    height: 2px; background: rgba(244,241,234,.2); margin-top: 6px; border-radius: 1px;
+    overflow: hidden;
+  }
+  .track .progress i{
+    display:block; height:100%; width:0%; background: var(--accent);
+    transition: width 200ms linear;
+  }
+
+  .hint{
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    z-index: 2; font-size: 12px; letter-spacing: .1em; opacity: .5;
+    pointer-events: none; transition: opacity 600ms ease;
+  }
+  body:not(.ui-hidden) .hint{ opacity: 0; }
+</style>
+</head>
+<body>
+
+<canvas id="film"></canvas>
+<div id="vignette"></div>
+<p class="hint">move your mouse — マウスを動かすとUIが現れます</p>
+
+<div class="ui">
+  <div class="top-row">
+    <div class="brand">Audiovisual&nbsp;Timeline<br>— demo —</div>
+    <div class="now-playing">
+      <div class="track-index" id="trackIndex">01 / 06</div>
+      <p class="track-title" id="trackTitle">Horizon</p>
+    </div>
+  </div>
+
+  <div class="timeline-wrap">
+    <div class="timeline-label">TRACKS</div>
+    <div class="timeline" id="timeline"></div>
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   使い方 / How to reuse
+   ---------------------------------------------------------------------
+   1. このファイルをそのまま自分のプロジェクトにコピーするだけで動作します。
+   2. 下の TRACKS 配列を書き換えれば、曲数・タイトル・色相・再生時間を
+      自由に変更できます(実際の映像を使う場合は #film の <canvas> を
+      <video> に差し替え、drawFilm() の呼び出しをやめてください)。
+   3. UI自動表示/非表示のしきい値は IDLE_MS で調整できます。
+   ===================================================================== */
+
+// ---- 1. トラック定義。曲ごとに色相(hue)を変えるだけでサイト全体の
+//        雰囲気がガラッと変わる、という元サイトの特徴を再現している。
+const TRACKS = [
+  { title: 'Horizon',  hue: 18  }, // オレンジ
+  { title: 'Static',   hue: 200 }, // 青
+  { title: 'Undertow', hue: 265 }, // 紫
+  { title: 'Echo Bay', hue: 150 }, // 緑
+  { title: 'Halflight',hue: 330 }, // ピンク
+  { title: 'Afterglow',hue: 40  }, // 黄
+];
+
+const IDLE_MS = 2600; // これだけ無操作が続いたらUIをフェードアウト
+
+// ---- 2. 状態 ----
+let activeIndex = 0;
+let currentHue = TRACKS[0].hue;
+let targetHue = TRACKS[0].hue;
+let playing = true;
+let idleTimer = null;
+
+// ---- 3. 背景の「フィルム」代替アニメーション -------------------------
+// 実写映像の代わりに、ゆっくり動く複数のグラデーション光源 + 微細な
+// グレインノイズでシネマティックな質感を作る。曲を切り替えると
+// currentHue が targetHue へ滑らかに補間され、色調がクロスフェードする。
+function makeFilm(canvas, { parallax = 1 } = {}){
+  const ctx = canvas.getContext('2d');
+  let w, h, dpr;
+  function resize(){
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    w = canvas.clientWidth; h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const blobs = Array.from({length: 4}, (_, i) => ({
+    a: Math.random() * Math.PI * 2,
+    speed: 0.06 + Math.random() * 0.05,
+    r: 0.35 + Math.random() * 0.25,
+    hueOffset: i * 22 - 33,
+  }));
+
+  function draw(t, hue){
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, w, h);
+
+    blobs.forEach((b, i) => {
+      const angle = b.a + t * b.speed * parallax;
+      const cx = w * 0.5 + Math.cos(angle) * w * 0.3;
+      const cy = h * 0.5 + Math.sin(angle * 1.3) * h * 0.28;
+      const radius = Math.max(w, h) * b.r;
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+      const hh = (hue + b.hueOffset + 360) % 360;
+      g.addColorStop(0, `hsla(${hh}, 70%, 55%, .55)`);
+      g.addColorStop(1, 'hsla(0,0%,0%,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    });
+
+    // 簡易グレイン(毎フレーム少量のノイズ点を重ねる)
+    ctx.globalAlpha = 0.05;
+    ctx.fillStyle = '#fff';
+    for (let i = 0; i < 40; i++){
+      ctx.fillRect(Math.random() * w, Math.random() * h, 1, 1);
+    }
+    ctx.globalAlpha = 1;
+  }
+  return { draw, get size(){ return { w, h }; } };
+}
+
+const filmCanvas = document.getElementById('film');
+const mainFilm = makeFilm(filmCanvas);
+
+function loop(t){
+  currentHue += (targetHue - currentHue) * 0.02; // 色相をなめらかに補間
+  if (playing) mainFilm.draw(t / 1000, currentHue);
+  // UIのアクセントカラー(タイトル文字・進行バーなど)も同じ色相に追従させる
+  document.documentElement.style.setProperty('--accent', `hsl(${currentHue}, 78%, 58%)`);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ---- 4. 下部タイムラインの生成 ----------------------------------------
+const timelineEl = document.getElementById('timeline');
+const thumbFilms = [];
+
+TRACKS.forEach((track, i) => {
+  const btn = document.createElement('button');
+  btn.className = 'track' + (i === 0 ? ' active' : '');
+  btn.innerHTML = `
+    <span class="thumb"><canvas></canvas></span>
+    <span class="meta"><span class="n">${String(i+1).padStart(2,'0')}</span><span>${track.title}</span></span>
+    <span class="progress"><i></i></span>
+  `;
+  btn.addEventListener('click', () => selectTrack(i));
+  timelineEl.appendChild(btn);
+
+  const thumbCanvas = btn.querySelector('canvas');
+  thumbFilms.push(makeFilm(thumbCanvas, { parallax: 0.4 }));
+});
+
+function renderThumbs(t){
+  thumbFilms.forEach((f, i) => f.draw(t / 1000 + i * 10, TRACKS[i].hue));
+}
+setInterval(() => renderThumbs(performance.now()), 200); // サムネは低頻度更新で軽量化
+
+function selectTrack(i){
+  activeIndex = i;
+  targetHue = TRACKS[i].hue;
+  document.getElementById('trackTitle').textContent = TRACKS[i].title;
+  document.getElementById('trackIndex').textContent =
+    String(i + 1).padStart(2, '0') + ' / ' + String(TRACKS.length).padStart(2, '0');
+  document.querySelectorAll('.track').forEach((el, idx) => {
+    el.classList.toggle('active', idx === i);
+  });
+  document.querySelectorAll('.track')[i].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+}
+
+// ---- 5. 疑似再生プログレス(現在のトラックの進行バーを動かすだけの見た目) ----
+let progress = 0;
+setInterval(() => {
+  if (!playing) return;
+  progress = (progress + 0.6) % 100;
+  const bar = document.querySelectorAll('.track')[activeIndex]?.querySelector('.progress i');
+  if (bar) bar.style.width = progress + '%';
+}, 100);
+
+// ---- 6. 再生/一時停止ボタン(必要なら追加してください。ここでは
+//        UI自動非表示のデモに集中するため省略し、フィルムの再生有無は
+//        playing フラグのみで管理しています) ----
+
+// ---- 7. UI 自動表示/非表示 ---------------------------------------------
+// 元サイトの核となる挙動: マウスが動く/タップされるとUIが現れ、
+// 一定時間操作がないとまたフェードアウトして映像に没入できるようにする。
+function showUI(){
+  document.body.classList.remove('ui-hidden');
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    document.body.classList.add('ui-hidden');
+  }, IDLE_MS);
+}
+
+window.addEventListener('pointermove', showUI);
+window.addEventListener('pointerdown', showUI);
+window.addEventListener('touchstart', showUI, { passive: true });
+window.addEventListener('keydown', showUI);
+
+showUI(); // 初期表示
+</script>
+</body>
+</html>
