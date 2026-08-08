@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VFX Portfolio Reveal — WebGLディストーション×キネティックタイポグラフィ×ページ遷移 再現デモ</title>
+<style>
+  :root{
+    --bg:#f5f4f0;
+    --panel:#ffffff;
+    --ink:#111111;
+    --sub:#6b6b6b;
+    --accent:#ff4d1c;
+    --line:#dcdad4;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"Helvetica Neue",Arial,"Hiragino Sans","Yu Gothic",sans-serif;
+    overflow-x:hidden;
+  }
+
+  /* ---------- Hero / キネティックタイポグラフィ ---------- */
+  header{
+    padding:14vh 6vw 8vh;
+  }
+  .eyebrow{
+    display:block;
+    letter-spacing:.25em;
+    font-size:12px;
+    color:var(--sub);
+    margin-bottom:18px;
+    text-transform:uppercase;
+  }
+  h1.kinetic-title{
+    margin:0;
+    font-size:clamp(38px,8vw,108px);
+    line-height:0.98;
+    font-weight:700;
+    letter-spacing:-0.02em;
+  }
+  h1.kinetic-title .char{
+    display:inline-block;
+    will-change:transform,opacity;
+  }
+  h1.kinetic-title .word{ display:inline-block; white-space:nowrap; }
+  p.lead{
+    max-width:520px;
+    margin:28px 0 0;
+    color:var(--sub);
+    font-size:16px;
+    line-height:1.7;
+  }
+
+  /* ---------- プロジェクトグリッド ---------- */
+  main{ padding:0 6vw 14vh; }
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+    gap:28px;
+  }
+  .card{
+    position:relative;
+    border:1px solid var(--line);
+    background:var(--panel);
+    cursor:pointer;
+    overflow:hidden;
+    border-radius:2px;
+  }
+  .card .visual{
+    position:relative;
+    width:100%;
+    aspect-ratio:4/3;
+    overflow:hidden;
+  }
+  .card canvas{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+    display:block;
+  }
+  .card .meta{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    padding:16px 18px 20px;
+  }
+  .card .meta h3{ margin:0; font-size:17px; font-weight:600; }
+  .card .meta span{ font-size:12px; color:var(--sub); letter-spacing:.05em; }
+
+  /* ---------- ページトランジション(ワイプ)オーバーレイ ---------- */
+  .transition-overlay{
+    position:fixed;
+    inset:0;
+    z-index:50;
+    display:flex;
+    pointer-events:none;
+  }
+  .transition-overlay .strip{
+    flex:1 0 0;
+    background:var(--ink);
+    transform:scaleY(0);
+    transform-origin:bottom;
+    transition:transform .62s cubic-bezier(.76,0,.24,1);
+  }
+  .transition-overlay.is-active{ pointer-events:auto; }
+  .transition-overlay.is-open .strip{ transform:scaleY(1); }
+
+  .detail{
+    position:fixed;
+    inset:0;
+    z-index:51;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    padding:8vh 8vw;
+    color:#f5f4f0;
+    background:transparent;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .35s ease;
+  }
+  .detail.show{ opacity:1; pointer-events:auto; }
+  .detail h2{ font-size:clamp(32px,6vw,72px); margin:0 0 18px; }
+  .detail p{ max-width:520px; color:#cfcfcf; line-height:1.8; }
+  .detail .close-btn{
+    align-self:flex-start;
+    margin-top:40px;
+    background:none;
+    border:1px solid #666;
+    color:#f5f4f0;
+    padding:10px 22px;
+    letter-spacing:.08em;
+    font-size:12px;
+    cursor:pointer;
+    text-transform:uppercase;
+  }
+  .detail .close-btn:hover{ border-color:var(--accent); color:var(--accent); }
+</style>
+</head>
+<body>
+
+  <header>
+    <span class="eyebrow">Interactive Portfolio — Reproduction Demo</span>
+    <h1 class="kinetic-title" id="heroTitle">Motion &amp; Frame</h1>
+    <p class="lead">
+      画像のホバー時にWebGLで揺らぎを起こす「ディストーション演出」、
+      文字を1文字ずつ動かして登場させる「キネティックタイポグラフィ」、
+      作品を開くときに画面をワイプして切り替える「ページトランジション」――
+      この3つの表現技法を、ゼロから書いたオリジナルコードで再現したデモです。
+    </p>
+  </header>
+
+  <main>
+    <div class="grid" id="projectGrid"></div>
+  </main>
+
+  <div class="transition-overlay" id="wipeOverlay"></div>
+  <div class="detail" id="detailPanel">
+    <h2 id="detailTitle">Project</h2>
+    <p id="detailDesc"></p>
+    <button class="close-btn" id="detailClose">Close</button>
+  </div>
+
+<script>
+/* =========================================================================
+   このファイルは3つの独立した機能を持つ「そのままコピーして使える」関数で
+   構成されています。それぞれ他のHTML/プロジェクトにコピーして
+   使い回せるように、DOMの前提を最小限にしています。
+
+   1. initKineticTitle(el, options)   … 文字ばらけ登場アニメーション
+   2. initDistortionHover(canvas, options) … WebGLホバーディストーション
+   3. createWipeTransition(overlayEl, options) … ワイプ式ページ遷移
+   ========================================================================= */
+
+/* -------------------------------------------------------------------------
+ * 1. initKineticTitle
+ *    見出し要素のテキストを1文字ずつ <span class="char"> に分解し、
+ *    Web Animations API でランダムに近い遅延をつけて登場させる。
+ *    登場が終わったら、文字ごとに位相をずらしたサイン波で
+ *    ゆっくり上下に揺れる「idle」アニメーションへ引き継ぐ。
+ *
+ *    使い方: initKineticTitle(document.querySelector('h1'));
+ * ---------------------------------------------------------------------- */
+function initKineticTitle(el, options = {}) {
+  const stagger = options.stagger ?? 28;   // 1文字あたりの遅延(ms)
+  const duration = options.duration ?? 700; // 1文字のアニメ時間(ms)
+
+  const text = el.textContent;
+  el.textContent = '';
+
+  const words = text.split(' ');
+  const chars = [];
+  words.forEach((word, wi) => {
+    const wordSpan = document.createElement('span');
+    wordSpan.className = 'word';
+    [...word].forEach((ch) => {
+      const charSpan = document.createElement('span');
+      charSpan.className = 'char';
+      charSpan.textContent = ch;
+      wordSpan.appendChild(charSpan);
+      chars.push(charSpan);
+    });
+    el.appendChild(wordSpan);
+    if (wi < words.length - 1) el.appendChild(document.createTextNode(' '));
+  });
+
+  chars.forEach((charEl, i) => {
+    const anim = charEl.animate(
+      [
+        { opacity: 0, transform: 'translateY(0.65em) rotate(6deg)' },
+        { opacity: 1, transform: 'translateY(0) rotate(0deg)' },
+      ],
+      {
+        duration,
+        delay: i * stagger,
+        easing: 'cubic-bezier(.2,.9,.2,1)',
+        fill: 'both',
+      }
+    );
+
+    // 登場アニメが終わったら、常時ゆらゆらするidleモーションに切り替える。
+    anim.onfinish = () => {
+      const phase = (i * 0.6) % (Math.PI * 2);
+      charEl.style.animation = `kineticIdle 3.4s ease-in-out ${-phase}s infinite`;
+    };
+  });
+
+  // idle用のキーフレームは一度だけ挿入する。
+  if (!document.getElementById('kinetic-idle-style')) {
+    const style = document.createElement('style');
+    style.id = 'kinetic-idle-style';
+    style.textContent = `
+      @keyframes kineticIdle {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-4px); }
+      }`;
+    document.head.appendChild(style);
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * 2. initDistortionHover
+ *    <canvas> にWebGLで矩形(2枚のトライアングル)を描き、フラグメント
+ *    シェーダー内でカーソル位置からの距離に応じてUVをずらすことで
+ *    「水面のように揺れる」ホバーディストーションを作る。
+ *    テクスチャは options.draw(ctx, w, h) で好きな絵を焼き込める
+ *    (実サイトの画像は使わず、このデモではグラデーション+ラベルを描画)。
+ *
+ *    使い方:
+ *      initDistortionHover(canvasEl, {
+ *        hoverTarget: cardEl,     // マウス座標の基準にする要素(省略時はcanvas自身)
+ *        draw: (ctx, w, h) => { ... }, // テクスチャを描く関数
+ *      });
+ * ---------------------------------------------------------------------- */
+function initDistortionHover(canvas, options = {}) {
+  const hoverTarget = options.hoverTarget || canvas;
+  const gl = canvas.getContext('webgl');
+  if (!gl) return;
+
+  const vsSource = `
+    attribute vec2 aPos;
+    varying vec2 vUv;
+    void main() {
+      vUv = aPos * 0.5 + 0.5;
+      gl_Position = vec4(aPos, 0.0, 1.0);
+    }`;
+
+  // カーソル距離に応じたリング状の波でUVを押し流し、テクスチャを揺らす。
+  const fsSource = `
+    precision mediump float;
+    varying vec2 vUv;
+    uniform sampler2D uTex;
+    uniform vec2 uMouse;
+    uniform float uTime;
+    uniform float uHover;
+    void main() {
+      vec2 uv = vUv;
+      vec2 toMouse = uv - uMouse;
+      float dist = length(toMouse);
+      float ripple = sin(dist * 34.0 - uTime * 5.0) * 0.035;
+      float falloff = smoothstep(0.55, 0.0, dist);
+      vec2 dir = dist > 0.0001 ? toMouse / dist : vec2(0.0);
+      uv += dir * ripple * falloff * uHover;
+      gl_FragColor = texture2D(uTex, uv);
+    }`;
+
+  function compile(type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    return shader;
+  }
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vsSource));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fsSource));
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  const quad = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(program, 'aPos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  // --- テクスチャ用オフスクリーンcanvas(実サイトの画像は使わずデモ用に生成) ---
+  const texCanvas = document.createElement('canvas');
+  texCanvas.width = 512;
+  texCanvas.height = 384;
+  const ctx = texCanvas.getContext('2d');
+  if (typeof options.draw === 'function') {
+    options.draw(ctx, texCanvas.width, texCanvas.height);
+  } else {
+    ctx.fillStyle = '#333';
+    ctx.fillRect(0, 0, texCanvas.width, texCanvas.height);
+  }
+
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  // Canvas2Dの座標系(原点が左上)とWebGLのテクスチャ座標系(原点が左下)の
+  // 違いを補正し、上下反転させずにそのまま貼り付ける。
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texCanvas);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+  const uMouse = gl.getUniformLocation(program, 'uMouse');
+  const uTime = gl.getUniformLocation(program, 'uTime');
+  const uHover = gl.getUniformLocation(program, 'uHover');
+
+  let mouse = { x: 0.5, y: 0.5 };
+  let hover = 0;         // 現在値(なめらかに目標へ近づける)
+  let hoverTarget2 = 0;   // 目標値(0=非ホバー / 1=ホバー中)
+
+  function resize() {
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * devicePixelRatio;
+    canvas.height = rect.height * devicePixelRatio;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  hoverTarget.addEventListener('mouseenter', () => { hoverTarget2 = 1; });
+  hoverTarget.addEventListener('mouseleave', () => { hoverTarget2 = 0; });
+  hoverTarget.addEventListener('mousemove', (e) => {
+    const rect = hoverTarget.getBoundingClientRect();
+    mouse.x = (e.clientX - rect.left) / rect.width;
+    mouse.y = 1.0 - (e.clientY - rect.top) / rect.height;
+  });
+
+  function frame(t) {
+    hover += (hoverTarget2 - hover) * 0.08; // lerpで滑らかに追従
+    gl.uniform2f(uMouse, mouse.x, mouse.y);
+    gl.uniform1f(uTime, t * 0.001);
+    gl.uniform1f(uHover, hover);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+/* -------------------------------------------------------------------------
+ * 3. createWipeTransition
+ *    画面を縦のストライプで覆い隠す/剥がすワイプ演出。
+ *    open() でグリッドを覆い隠しながらディテールを表示し、
+ *    close() で逆再生してグリッドへ戻る。
+ *
+ *    使い方:
+ *      const wipe = createWipeTransition(overlayEl, { stripCount: 6 });
+ *      wipe.open(() => { detailPanel.classList.add('show'); });
+ *      wipe.close(() => { detailPanel.classList.remove('show'); });
+ * ---------------------------------------------------------------------- */
+function createWipeTransition(overlayEl, options = {}) {
+  const stripCount = options.stripCount ?? 6;
+  const stepDelay = options.stepDelay ?? 45; // ストリップごとの遅延(ms)
+
+  overlayEl.innerHTML = '';
+  const strips = [];
+  for (let i = 0; i < stripCount; i++) {
+    const strip = document.createElement('div');
+    strip.className = 'strip';
+    overlayEl.appendChild(strip);
+    strips.push(strip);
+  }
+
+  function setDelays(reverse) {
+    strips.forEach((strip, i) => {
+      const order = reverse ? strips.length - 1 - i : i;
+      strip.style.transitionDelay = `${order * stepDelay}ms`;
+    });
+  }
+
+  return {
+    open(onCovered) {
+      overlayEl.classList.add('is-active');
+      setDelays(false);
+      requestAnimationFrame(() => overlayEl.classList.add('is-open'));
+      const total = stripCount * stepDelay + 620;
+      setTimeout(() => onCovered && onCovered(), total);
+    },
+    close(onRevealed) {
+      setDelays(true);
+      overlayEl.classList.remove('is-open');
+      const total = stripCount * stepDelay + 620;
+      setTimeout(() => {
+        overlayEl.classList.remove('is-active');
+        onRevealed && onRevealed();
+      }, total);
+    },
+  };
+}
+
+/* =========================================================================
+   以下、このデモページ自体の組み立て(ダミーのプロジェクトデータを使って
+   上の3つの関数を呼び出しているだけの部分)。
+   ========================================================================= */
+const PROJECTS = [
+  { title: 'Silent Horizon',   tag: 'CGI / 2026', hue: 18,  desc: '架空のショートフィルム用に作成したCGIカット集。WebGLディストーションでホバー時に画面が水面のように揺れる演出のデモ用ダミーデータです。' },
+  { title: 'Glass Fracture',   tag: 'VFX / 2026', hue: 200, desc: '光の屈折表現をテーマにしたVFX実験のダミー紹介文。実際の映像・画像は含まれておらず、Canvasで生成したプレースホルダーです。' },
+  { title: 'Paper Weight',     tag: 'CGI / 2025', hue: 95,  desc: '質感表現の実験として制作したダミー作品。カードにマウスを乗せるとWebGLシェーダーが波紋のように揺らぎます。' },
+  { title: 'Afterimage',       tag: 'VFX / 2025', hue: 320, desc: 'モーションブラーとタイポグラフィを組み合わせた架空プロジェクト。クリックでワイプ遷移し詳細ビューを表示します。' },
+  { title: 'Low Orbit',        tag: 'CGI / 2025', hue: 250, desc: '宇宙空間を舞台にしたダミー作品紹介。実サイトの画像・文章は使用していません。' },
+  { title: 'Static Bloom',     tag: 'VFX / 2024', hue: 40,  desc: '粒子表現をテーマにしたダミープロジェクト。グリッドカードの一例として掲載しています。' },
+];
+
+function drawPlaceholderArt(ctx, w, h, hue) {
+  const grad = ctx.createLinearGradient(0, 0, w, h);
+  grad.addColorStop(0, `hsl(${hue}, 60%, 88%)`);
+  grad.addColorStop(1, `hsl(${(hue + 40) % 360}, 55%, 62%)`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < w; x += 24) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+  }
+  for (let y = 0; y < h; y += 24) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+
+  ctx.fillStyle = 'rgba(17,17,17,0.75)';
+  ctx.font = '600 22px "Helvetica Neue", Arial, sans-serif';
+  ctx.fillText('PLACEHOLDER ARTWORK', 24, h - 28);
+}
+
+function buildGrid() {
+  const grid = document.getElementById('projectGrid');
+  const wipe = createWipeTransition(document.getElementById('wipeOverlay'), { stripCount: 6, stepDelay: 45 });
+  const detailPanel = document.getElementById('detailPanel');
+  const detailTitle = document.getElementById('detailTitle');
+  const detailDesc = document.getElementById('detailDesc');
+
+  PROJECTS.forEach((p) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="visual"><canvas></canvas></div>
+      <div class="meta"><h3>${p.title}</h3><span>${p.tag}</span></div>
+    `;
+    grid.appendChild(card);
+
+    const canvas = card.querySelector('canvas');
+    initDistortionHover(canvas, {
+      hoverTarget: card,
+      draw: (ctx, w, h) => drawPlaceholderArt(ctx, w, h, p.hue),
+    });
+
+    card.addEventListener('click', () => {
+      wipe.open(() => {
+        detailTitle.textContent = p.title;
+        detailDesc.textContent = p.desc;
+        detailPanel.classList.add('show');
+      });
+    });
+  });
+
+  document.getElementById('detailClose').addEventListener('click', () => {
+    detailPanel.classList.remove('show');
+    wipe.close();
+  });
+}
+
+initKineticTitle(document.getElementById('heroTitle'));
+buildGrid();
+</script>
+</body>
+</html>
