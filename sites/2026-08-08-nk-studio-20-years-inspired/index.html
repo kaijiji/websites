@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>20 Years Inspired 風 表現デモ — 文字単位のSplitTextリビール / スクロール連動DrawSVGタイムライン</title>
+<style>
+  :root{
+    --bg:#f1ece2;
+    --ink:#1c1a16;
+    --ink-60:rgba(28,26,22,0.6);
+    --ink-30:rgba(28,26,22,0.3);
+    --ink-12:rgba(28,26,22,0.12);
+  }
+  *{ box-sizing:border-box; }
+  html{ scroll-behavior:smooth; }
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Georgia","Hiragino Mincho ProN","Yu Mincho",serif;
+    overflow-x:hidden;
+  }
+  a{ color:inherit; }
+  ::selection{ background:var(--ink); color:var(--bg); }
+  section{ padding:0 6vw; position:relative; }
+
+  header{
+    position:fixed; top:0; left:0; right:0; z-index:50;
+    display:flex; justify-content:space-between; align-items:center;
+    padding:1.4rem 6vw; font-family:Arial,"Hiragino Sans",sans-serif;
+    font-size:0.72rem; letter-spacing:0.14em; text-transform:uppercase;
+    mix-blend-mode:difference; color:#fff;
+  }
+
+  /* ---------- ヒーロー：文字単位のSplitTextリビール ---------- */
+  #hero{
+    min-height:100svh; display:flex; flex-direction:column;
+    justify-content:center; align-items:flex-start; padding-top:8rem; padding-bottom:6rem;
+  }
+  #hero .eyebrow{
+    font-family:Arial,"Hiragino Sans",sans-serif; font-size:0.75rem;
+    letter-spacing:0.2em; text-transform:uppercase; color:var(--ink-60);
+    margin:0 0 1.4rem;
+  }
+  #hero h1{
+    margin:0; font-weight:400; letter-spacing:-0.01em;
+    font-size:clamp(2.6rem, 8vw, 6.4rem); line-height:1.02;
+  }
+  /* split-char: 1文字ずつspanで包み、外側でoverflow:hiddenして縦にスライドイン */
+  .split-line{ display:block; overflow:hidden; padding-bottom:0.08em; }
+  .split-char{
+    display:inline-block; transform:translateY(115%) rotate(4deg);
+    opacity:0;
+    transition:transform .9s cubic-bezier(.16,1,.3,1), opacity .6s ease;
+    transition-delay:calc(var(--i,0) * 26ms);
+  }
+  .split-ready .split-char{ transform:translateY(0) rotate(0deg); opacity:1; }
+
+  #hero .lede{
+    margin:2.2rem 0 0; max-width:34ch; font-size:1.15rem; line-height:1.7;
+    color:var(--ink-60); font-style:italic;
+  }
+
+  /* ---------- タイムライン：スクロール連動DrawSVG ---------- */
+  #timeline{ padding:10vh 6vw; max-width:920px; margin:0 auto; }
+  #timeline .head{
+    font-family:Arial,"Hiragino Sans",sans-serif; font-size:0.75rem;
+    letter-spacing:0.2em; text-transform:uppercase; color:var(--ink-60);
+    margin-bottom:4rem;
+  }
+  .tl-rail{ position:relative; padding-left:64px; }
+  .tl-rail svg{ position:absolute; left:0; top:0; width:64px; height:100%; overflow:visible; }
+  .tl-rail .rail-path{ fill:none; stroke:var(--ink); stroke-width:1.5; }
+
+  .tl-entry{
+    position:relative; padding:0 0 6.5rem; opacity:0.25;
+    transition:opacity .5s ease;
+  }
+  .tl-entry:last-child{ padding-bottom:0; }
+  .tl-entry.is-active{ opacity:1; }
+  .tl-entry .dot{
+    position:absolute; left:-64px; top:0.35em; width:12px; height:12px;
+    border-radius:50%; background:var(--bg); border:1.5px solid var(--ink);
+    transform:translateX(26px) scale(0.9);
+    transition:background .4s ease, transform .4s ease;
+  }
+  .tl-entry.is-active .dot{ background:var(--ink); transform:translateX(26px) scale(1.15); }
+  .tl-entry .year{
+    font-family:Arial,"Hiragino Sans",sans-serif; font-size:0.78rem;
+    letter-spacing:0.1em; color:var(--ink-60); margin:0 0 0.6rem;
+  }
+  .tl-entry h3{ margin:0 0 0.8rem; font-weight:400; font-size:clamp(1.5rem,3vw,2.1rem); }
+  .tl-entry p{ margin:0; max-width:60ch; line-height:1.85; color:var(--ink-60); font-size:1.02rem; }
+
+  /* ---------- 共有CTA ---------- */
+  #share{
+    padding:14vh 6vw 16vh; text-align:center; border-top:1px solid var(--ink-12);
+  }
+  #share h2{
+    font-weight:400; letter-spacing:-0.01em; margin:0 auto 2rem;
+    font-size:clamp(1.8rem,5vw,3.4rem); max-width:18ch; line-height:1.2;
+  }
+  #share form{
+    display:flex; gap:0; max-width:520px; margin:0 auto;
+    border-bottom:1.5px solid var(--ink);
+  }
+  #share input{
+    flex:1; border:none; background:none; padding:0.9rem 0.2rem;
+    font:inherit; font-size:1.05rem; color:var(--ink); outline:none;
+    font-family:Arial,"Hiragino Sans",sans-serif;
+  }
+  #share input::placeholder{ color:var(--ink-30); }
+  #share button{
+    border:none; background:none; font:inherit; cursor:pointer;
+    font-family:Arial,"Hiragino Sans",sans-serif; letter-spacing:0.08em;
+    text-transform:uppercase; font-size:0.78rem; color:var(--ink);
+    padding:0 0.4rem;
+  }
+  footer{
+    padding:3rem 6vw 4rem; text-align:center; font-family:Arial,"Hiragino Sans",sans-serif;
+    font-size:0.72rem; letter-spacing:0.06em; color:var(--ink-30);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span>Inspired Archive</span>
+  <span>20 Years</span>
+</header>
+
+<section id="hero">
+  <p class="eyebrow">A living archive, 2006 — 2026</p>
+  <h1 id="hero-title"></h1>
+  <p class="lede">Before inspiring, we were inspired. これは、私たちを形づくった人・仕事・瞬間をたどるアーカイブの再現デモです。</p>
+</section>
+
+<section id="timeline">
+  <p class="head">Stories that shaped two decades</p>
+  <div class="tl-rail">
+    <svg viewBox="0 0 64 100" preserveAspectRatio="none">
+      <path class="rail-path" id="rail-path" d="M32,0 L32,100" />
+    </svg>
+    <div id="tl-list"></div>
+  </div>
+</section>
+
+<section id="share">
+  <h2>あなたを動かした人は、誰ですか。</h2>
+  <form onsubmit="return false;">
+    <input type="text" placeholder="名前とひとことを書いてください" />
+    <button type="submit">Send →</button>
+  </form>
+</section>
+
+<footer>20 Years Inspired — 学習用オリジナル再現デモ</footer>
+
+<script>
+"use strict";
+
+/* =========================================================================
+ * 1. splitIntoChars(el): 要素内のテキストを1文字ずつ <span class="split-char">
+ *    で包む(GSAP SplitTextの簡易自作版)。単語の途中で改行されないよう、
+ *    単語ごとに <span class="split-line"> でも包み、その中でだけ折り返す。
+ *    各文字には --i (登場順)をセットし、CSS側の transition-delay と
+ *    組み合わせることで、文字が一文字ずつ斜めに立ち上がるリビールになる。
+ *    使い方: splitIntoChars(document.querySelector("h1"));
+ *            その後 el.classList.add("split-ready") でアニメーション開始。
+ * ========================================================================= */
+function splitIntoChars(el){
+  const text = el.textContent;
+  el.textContent = "";
+  let i = 0;
+  const words = text.split(" ");
+  words.forEach((word, wi) => {
+    const line = document.createElement("span");
+    line.className = "split-line";
+    [...word].forEach((ch) => {
+      const charEl = document.createElement("span");
+      charEl.className = "split-char";
+      charEl.style.setProperty("--i", i++);
+      charEl.textContent = ch;
+      line.appendChild(charEl);
+    });
+    el.appendChild(line);
+    if(wi < words.length - 1){
+      el.appendChild(document.createTextNode(" "));
+      i++; // 単語間のスペースにも遅延の歩幅を残しておく
+    }
+  });
+  return el;
+}
+
+/* =========================================================================
+ * 2. initDrawSVGOnScroll(path, track, opts): GSAPのDrawSVGPluginに相当する
+ *    「スクロール量に連動してSVGパスが少しずつ描かれる」演出を、
+ *    stroke-dasharray / stroke-dashoffset だけで自作する。
+ *    - path.getTotalLength() で線の全長を取得し、dasharrayに全長をセット
+ *    - track要素がビューポートを通過する進行度(0〜1)を毎フレーム計算
+ *    - dashoffset = length * (1 - progress) にすることで、
+ *      上から下へ線が伸びていくように見せる
+ *    onProgress(progress) が毎フレーム呼ばれるので、他の要素(タイムラインの
+ *    項目のアクティブ化など)にも同じ進行度を使い回せる。
+ * ========================================================================= */
+function initDrawSVGOnScroll(path, track, onProgress){
+  const length = path.getTotalLength();
+  path.style.strokeDasharray = String(length);
+
+  let ticking = false;
+  function update(){
+    ticking = false;
+    const rect = track.getBoundingClientRect();
+    const viewport = window.innerHeight;
+    // トラック上端が画面下に来た瞬間を0、トラック下端が画面上を抜けた瞬間を1とする
+    const total = rect.height + viewport;
+    const traveled = viewport - rect.top;
+    const progress = Math.max(0, Math.min(1, traveled / total));
+
+    path.style.strokeDashoffset = String(length * (1 - progress));
+    onProgress(progress);
+  }
+  function onScroll(){
+    if(!ticking){
+      requestAnimationFrame(update);
+      ticking = true;
+    }
+  }
+  addEventListener("scroll", onScroll, { passive: true });
+  addEventListener("resize", onScroll);
+  update();
+}
+
+/* =========================================================================
+ * 3. buildTimeline(container, items): データからタイムラインの各エントリー
+ *    (年・見出し・本文)のDOMを組み立てる。svgの高さをエントリー数に応じて
+ *    調整し、dot(丸印)を各エントリーの上端に揃えて配置する。
+ * ========================================================================= */
+function buildTimeline(container, items){
+  items.forEach((item) => {
+    const entry = document.createElement("div");
+    entry.className = "tl-entry";
+    entry.innerHTML = `
+      <span class="dot"></span>
+      <p class="year">${item.year}</p>
+      <h3>${item.title}</h3>
+      <p>${item.text}</p>
+    `;
+    container.appendChild(entry);
+  });
+}
+
+/* =========================================================================
+ * 4. initRevealOnScroll(selector): IntersectionObserverで画面内に入った
+ *    要素へ is-active クラスを付ける、汎用のスクロールリビール。
+ * ========================================================================= */
+function initRevealOnScroll(selector, opts = {}){
+  const els = document.querySelectorAll(selector);
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      entry.target.classList.toggle("is-active", entry.isIntersecting);
+    });
+  }, { threshold: opts.threshold ?? 0.4 });
+  els.forEach((el) => io.observe(el));
+}
+
+/* ---------- 初期化 ---------- */
+(function init(){
+  const heroTitle = document.getElementById("hero-title");
+  heroTitle.textContent = "20 Years, inspired by people.";
+  splitIntoChars(heroTitle);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    heroTitle.classList.add("split-ready");
+  }));
+
+  const STORIES = [
+    { year: "2006", title: "はじまりの1行", text: "小さなオフィスで書いた最初のコードが、20年続くスタジオのはじまりだった。" },
+    { year: "2012", title: "師と呼べる人", text: "タイポグラフィの見方を変えてくれた、ある先輩デザイナーとの出会い。" },
+    { year: "2017", title: "壊れかけたプロジェクト", text: "失敗しかけた案件が、チームの働き方そのものを見直すきっかけになった。" },
+    { year: "2021", title: "遠くの都市から", text: "国境を越えて届いた1通のメールが、新しい協業のかたちを教えてくれた。" },
+    { year: "2026", title: "次の20年へ", text: "ここまで読んでくれたあなたの物語も、このアーカイブの続きになる。" }
+  ];
+  const tlList = document.getElementById("tl-list");
+  buildTimeline(tlList, STORIES);
+  initRevealOnScroll(".tl-entry");
+
+  const railPath = document.getElementById("rail-path");
+  const rail = document.querySelector(".tl-rail");
+  initDrawSVGOnScroll(railPath, rail, () => {});
+})();
+</script>
+</body>
+</html>
