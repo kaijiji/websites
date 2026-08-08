@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SIGNAL / TRUST — 環境データ・ストーリーテリング表現の再現デモ</title>
+<meta name="description" content="Awwwards Site of the Day「Alethia」の表現技法(2トーン配色・スクロール連動シグナル波形・段階的検証タイムライン・カウントアップ)を学習目的でオリジナル再現したデモ" />
+<style>
+  :root {
+    --bg: #0f1f10;
+    --bg-2: #16281a;
+    --fg: #eef7ea;
+    --fg-dim: #9fb69e;
+    --accent: #c6f19d;
+    --accent-dim: rgba(198, 241, 157, 0.18);
+    --line: rgba(238, 247, 234, 0.14);
+    --ease: cubic-bezier(.16, 1, .3, 1);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Arial, sans-serif;
+    overflow-x: hidden;
+  }
+  a { color: var(--accent); }
+  ::selection { background: var(--accent); color: #0f1f10; }
+
+  /* ============================================================
+     1. ヘッダー(固定・シンプルな2色配色)
+     ============================================================ */
+  header.nav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px clamp(20px, 4vw, 48px);
+    background: linear-gradient(180deg, rgba(15,31,16,.9), rgba(15,31,16,0));
+  }
+  .nav-logo { font-weight: 700; letter-spacing: .1em; font-size: 14px; }
+  .nav-logo b { color: var(--accent); }
+  .nav-links { display: flex; gap: 28px; font-size: 12px; letter-spacing: .08em; }
+  .nav-links a { text-decoration: none; color: var(--fg-dim); transition: color .3s var(--ease); }
+  .nav-links a:hover { color: var(--accent); }
+  @media (max-width: 640px) { .nav-links { display: none; } }
+
+  main { position: relative; z-index: 1; }
+  section { padding: clamp(90px, 16vh, 160px) clamp(20px, 6vw, 64px); }
+
+  /* ============================================================
+     2. ヒーロー: 行ごとのマスクリベール見出し
+     ============================================================ */
+  .hero {
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding-top: 120px;
+  }
+  .hero-eyebrow {
+    color: var(--accent);
+    font-size: 12px;
+    letter-spacing: .2em;
+    text-transform: uppercase;
+    margin: 0 0 18px;
+  }
+  .kinetic-title {
+    margin: 0;
+    font-size: clamp(40px, 9vw, 108px);
+    font-weight: 700;
+    line-height: .98;
+    letter-spacing: -.02em;
+  }
+  .kinetic-title .line { display: block; overflow: hidden; }
+  .kinetic-title .line span {
+    display: inline-block;
+    transform: translateY(105%);
+    transition: transform .9s var(--ease);
+    transition-delay: calc(var(--i, 0) * 90ms);
+  }
+  .is-loaded .kinetic-title .line span { transform: translateY(0); }
+  .hero-sub {
+    max-width: 560px;
+    margin: 28px 0 0;
+    color: var(--fg-dim);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+  .scroll-hint {
+    margin-top: 60px;
+    font-size: 11px;
+    letter-spacing: .18em;
+    color: var(--fg-dim);
+  }
+  .scroll-hint::before {
+    content: "";
+    display: inline-block;
+    width: 28px; height: 1px;
+    background: var(--fg-dim);
+    margin-right: 10px;
+    vertical-align: middle;
+  }
+
+  /* ============================================================
+     3. ピン留めシグナル波形セクション
+     外側 spacer に高さを確保し、内側 sticky を画面に固定。
+     スクロール進捗(0〜1)を canvas の波形描画量と
+     カウントアップ数値の両方に同時に反映させる。
+     ============================================================ */
+  .signal-spacer { height: 280vh; position: relative; }
+  .signal-sticky {
+    position: sticky;
+    top: 0;
+    height: 100svh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .signal-label {
+    font-size: 12px;
+    letter-spacing: .2em;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+  #signalCanvas {
+    width: min(88vw, 900px);
+    height: clamp(160px, 26vw, 260px);
+  }
+  .signal-counter {
+    margin-top: 28px;
+    font-size: clamp(32px, 6vw, 64px);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .signal-counter span { color: var(--accent); }
+  .signal-counter-label {
+    font-size: 12px;
+    color: var(--fg-dim);
+    letter-spacing: .1em;
+    margin-top: 6px;
+  }
+  .signal-progress {
+    position: absolute;
+    left: 0; bottom: 0;
+    height: 3px; width: 100%;
+    background: var(--line);
+  }
+  .signal-progress-bar {
+    height: 100%; width: 0%;
+    background: var(--accent);
+  }
+
+  /* ============================================================
+     4. 検証タイムライン(ピン留め・ノードが順番に点灯)
+     ============================================================ */
+  .timeline-spacer { height: 320vh; position: relative; }
+  .timeline-sticky {
+    position: sticky;
+    top: 0;
+    height: 100svh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .timeline-heading {
+    font-size: clamp(22px, 3.4vw, 34px);
+    font-weight: 700;
+    margin-bottom: clamp(50px, 10vh, 100px);
+    text-align: center;
+  }
+  .timeline-track {
+    position: relative;
+    width: min(90vw, 880px);
+    height: 2px;
+    background: var(--line);
+  }
+  .timeline-fill {
+    position: absolute;
+    left: 0; top: 0;
+    height: 100%; width: 0%;
+    background: var(--accent);
+    transition: width .05s linear;
+  }
+  .timeline-nodes {
+    display: flex;
+    justify-content: space-between;
+    position: absolute;
+    left: 0; right: 0; top: 50%;
+    transform: translateY(-50%);
+  }
+  .timeline-node {
+    position: relative;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 2px solid var(--fg-dim);
+    transition: background .4s var(--ease), border-color .4s var(--ease), transform .4s var(--ease);
+  }
+  .timeline-node.is-active {
+    background: var(--accent);
+    border-color: var(--accent);
+    transform: scale(1.25);
+  }
+  .timeline-node-label {
+    position: absolute;
+    top: 26px; left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-size: 12px;
+    letter-spacing: .08em;
+    color: var(--fg-dim);
+    transition: color .4s var(--ease);
+  }
+  .timeline-node.is-active .timeline-node-label { color: var(--accent); }
+  .timeline-node-desc {
+    position: absolute;
+    top: 56px; left: 50%;
+    transform: translateX(-50%);
+    width: 160px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--fg-dim);
+    line-height: 1.6;
+    opacity: 0;
+    transition: opacity .4s var(--ease);
+  }
+  .timeline-node.is-active .timeline-node-desc { opacity: 1; }
+  @media (max-width: 720px) {
+    .timeline-node-desc { display: none; }
+  }
+
+  /* ============================================================
+     5. データカード(スクロールで個別にカウントアップ)
+     ============================================================ */
+  .stats { max-width: 1100px; margin: 0 auto; }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+  .stat-card {
+    background: var(--bg);
+    padding: 40px 28px;
+  }
+  .stat-value {
+    font-size: clamp(30px, 4.4vw, 52px);
+    font-weight: 700;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-label {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--fg-dim);
+    line-height: 1.6;
+  }
+
+  /* ============================================================
+     6. リベール文(段落単語ごとのマスクアニメ)
+     ============================================================ */
+  .statement { max-width: 900px; margin: 0 auto; }
+  .reveal-lines {
+    font-size: clamp(22px, 3.6vw, 38px);
+    font-weight: 600;
+    line-height: 1.5;
+    margin: 0;
+  }
+  .reveal-lines .word-wrap { display: inline-block; overflow: hidden; vertical-align: top; }
+  .reveal-lines .word {
+    display: inline-block;
+    transform: translateY(112%);
+    transition: transform .7s var(--ease);
+    transition-delay: calc(var(--i, 0) * 18ms);
+  }
+  .reveal-lines.is-in .word { transform: translateY(0); }
+
+  footer {
+    padding: clamp(70px, 14vh, 140px) clamp(20px, 6vw, 64px) 60px;
+    border-top: 1px solid var(--line);
+    text-align: center;
+  }
+  .cta {
+    font-size: clamp(32px, 7vw, 84px);
+    font-weight: 700;
+    line-height: 1;
+    margin: 0 0 24px;
+  }
+  footer .credit { color: var(--fg-dim); font-size: 12px; letter-spacing: .04em; }
+  footer .credit a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-logo"><b>ALETHIA</b> / SIGNAL</div>
+  <nav class="nav-links">
+    <a href="#signal">Signal</a>
+    <a href="#verify">Verify</a>
+    <a href="#stats">Impact</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero" id="hero">
+    <p class="hero-eyebrow">Environmental Intelligence — 学習用再現デモ</p>
+    <h1 class="kinetic-title" data-kinetic>
+      <span class="line">MEASURE.</span>
+      <span class="line">VERIFY.</span>
+      <span class="line">TRUST.</span>
+    </h1>
+    <p class="hero-sub">
+      大気中のシグナルを1秒間に何度も計測し、ブロックチェーンで検証可能な形で記録する——
+      環境インテリジェンス・プラットフォームの世界観を、2トーン配色とスクロール連動の
+      「シグナル可視化」で表現した再現デモです(架空のコピー / Fictitious Copy)。
+    </p>
+    <p class="scroll-hint">SCROLL TO SEE THE SIGNAL</p>
+  </section>
+
+  <section class="signal" id="signal">
+    <div class="signal-spacer">
+      <div class="signal-sticky">
+        <p class="signal-label">Live Atmospheric Signal(再現デモ用の疑似波形)</p>
+        <canvas id="signalCanvas"></canvas>
+        <div class="signal-counter"><span id="counterValue">0</span></div>
+        <p class="signal-counter-label">MEASUREMENTS CAPTURED THIS SESSION(演出用のダミー値)</p>
+        <div class="signal-progress"><div class="signal-progress-bar" id="signalProgressBar"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="statement">
+    <h2 class="reveal-lines" data-reveal>
+      信頼できる環境データは、測定するだけでは生まれない。継続的な計測と、検証可能な記録が
+      揃って初めて、数字は「証拠」になる。
+    </h2>
+  </section>
+
+  <section class="verify" id="verify">
+    <div class="timeline-spacer">
+      <div class="timeline-sticky">
+        <h2 class="timeline-heading">From raw signal to verified trust</h2>
+        <div class="timeline-track">
+          <div class="timeline-fill" id="timelineFill"></div>
+          <div class="timeline-nodes" id="timelineNodes">
+            <!-- ノードは initVerificationTimeline() が生成 -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="stats" id="stats">
+    <div class="stats-grid" id="statsGrid">
+      <!-- カードは JS で生成し、画面に入ったらカウントアップする -->
+    </div>
+  </section>
+</main>
+
+<footer>
+  <h2 class="cta reveal-lines" data-reveal>See the signal. Trust the data.</h2>
+  <p class="credit">
+    学習用再現デモ — 元サイト: <a href="https://www.alethia.earth/" target="_blank" rel="noopener">alethia.earth</a>
+    (Awwwards Site of the Day, 2026年8月6日)
+  </p>
+</footer>
+
+<script>
+/* ================================================================
+ * 以下、このデモを構成する再利用可能なユーティリティ関数群。
+ * どれも依存ライブラリなしのバニラJSで、そのままコピーして
+ * 自分のプロジェクトに組み込めるように単機能で書いています。
+ * ================================================================ */
+
+/**
+ * getScrollProgress(spacerEl)
+ * 「外側に高さを確保した spacer 要素」が画面を通過する進捗を 0〜1 で返す。
+ * position: sticky と組み合わせた「ピン留めスクロール」演出の土台となる、
+ * このデモ全体で使い回す共通ユーティリティ。
+ */
+function getScrollProgress(spacerEl) {
+  const rect = spacerEl.getBoundingClientRect();
+  const scrollable = spacerEl.offsetHeight - window.innerHeight;
+  if (scrollable <= 0) return 1;
+  return Math.min(1, Math.max(0, -rect.top / scrollable));
+}
+
+/**
+ * splitIntoLines(el) / splitIntoWords(el)
+ * 見出しを1行 or 1単語ごとの <span> に分解し、CSS変数 --i (出現順)を注入する。
+ * CSS側の transition-delay: calc(var(--i) * 数値) と組み合わせて
+ * 「順番にせり上がる」ストップモーション風の演出を作る。
+ */
+function splitIntoLines(titleEl) {
+  titleEl.querySelectorAll('.line').forEach((lineEl, i) => {
+    const text = lineEl.textContent;
+    lineEl.textContent = '';
+    const span = document.createElement('span');
+    span.style.setProperty('--i', i);
+    span.textContent = text;
+    lineEl.appendChild(span);
+  });
+}
+
+function splitIntoWords(el) {
+  const text = el.textContent.trim();
+  el.textContent = '';
+  text.split(/\s+/).forEach((word, i) => {
+    const wrap = document.createElement('span');
+    wrap.className = 'word-wrap';
+    const inner = document.createElement('span');
+    inner.className = 'word';
+    inner.style.setProperty('--i', i);
+    inner.textContent = word;
+    wrap.appendChild(inner);
+    el.appendChild(wrap);
+    el.appendChild(document.createTextNode(' '));
+  });
+}
+
+/**
+ * observeReveal(selector, activeClass)
+ * IntersectionObserver で要素が画面に入った瞬間を検知し、
+ * activeClass を1回だけ付与する汎用スクロールリベーラー。
+ */
+function observeReveal(selector, activeClass = 'is-in') {
+  const els = document.querySelectorAll(selector);
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add(activeClass);
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.35 });
+  els.forEach((el) => io.observe(el));
+}
+
+/**
+ * initSignalSection({ spacerEl, canvas, counterEl, progressBarEl, target })
+ * ピン留めセクション内で、スクロール進捗に応じて
+ *   1) canvas に「計測シグナル」の波形を左から右へ描き進める
+ *   2) 数値カウンターを 0 → target まで進捗に連動して増やす
+ *   3) 下部の進捗バーの幅を更新する
+ * という3つの表現を同時に駆動する。requestAnimationFrame の中で
+ * 毎回 getScrollProgress() を呼び直すだけなので、スクロール量の
+ * 単位変換だけ理解すれば他の用途にも流用しやすい。
+ */
+function initSignalSection({ spacerEl, canvas, counterEl, progressBarEl, target }) {
+  const ctx = canvas.getContext('2d');
+  let width, height, dpr;
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    width = canvas.clientWidth;
+    height = canvas.clientHeight;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // 疑似的な「大気シグナル」波形をあらかじめ生成しておく
+  // (複数の正弦波を重ねてノイズを足すことで、計測データっぽい揺らぎを作る)
+  const POINTS = 240;
+  const samples = new Array(POINTS).fill(0).map((_, i) => {
+    const t = i / POINTS;
+    return (
+      Math.sin(t * Math.PI * 6) * 0.35 +
+      Math.sin(t * Math.PI * 17 + 1.3) * 0.18 +
+      (Math.random() - 0.5) * 0.12
+    );
+  });
+
+  function draw(progress) {
+    ctx.clearRect(0, 0, width, height);
+    const visibleCount = Math.max(2, Math.floor(POINTS * progress));
+    ctx.beginPath();
+    ctx.strokeStyle = '#c6f19d';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < visibleCount; i++) {
+      const x = (i / (POINTS - 1)) * width;
+      const y = height / 2 - samples[i] * height * 0.8;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // 波形の先端に「計測中」を示すドットを描く
+    if (visibleCount > 0) {
+      const lastX = ((visibleCount - 1) / (POINTS - 1)) * width;
+      const lastY = height / 2 - samples[visibleCount - 1] * height * 0.8;
+      ctx.beginPath();
+      ctx.fillStyle = '#c6f19d';
+      ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function loop() {
+    const progress = getScrollProgress(spacerEl);
+    draw(progress);
+    counterEl.textContent = Math.floor(progress * target).toLocaleString('en-US');
+    progressBarEl.style.width = `${progress * 100}%`;
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+}
+
+/**
+ * initVerificationTimeline({ spacerEl, nodesEl, fillEl, steps })
+ * ピン留めセクション内で、スクロール進捗に応じて steps の各ノードを
+ * 順番に「点灯」させ、ノード間をつなぐ線(fillEl)の幅を進捗と同期させる。
+ * steps は [{ label, desc }, ...] の配列。
+ */
+function initVerificationTimeline({ spacerEl, nodesEl, fillEl, steps }) {
+  const nodeEls = steps.map((step, i) => {
+    const node = document.createElement('div');
+    node.className = 'timeline-node';
+    node.innerHTML = `
+      <span class="timeline-node-label">${step.label}</span>
+      <span class="timeline-node-desc">${step.desc}</span>
+    `;
+    nodesEl.appendChild(node);
+    return node;
+  });
+
+  function loop() {
+    const progress = getScrollProgress(spacerEl);
+    fillEl.style.width = `${progress * 100}%`;
+    // 進捗をステップ数で等分し、閾値を超えたノードから順に点灯させる
+    nodeEls.forEach((node, i) => {
+      const threshold = i / (nodeEls.length - 1);
+      node.classList.toggle('is-active', progress >= threshold - 0.02);
+    });
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+}
+
+/**
+ * initCountUpCards(containerEl, cards)
+ * cards = [{ value, label }, ...] からカードDOMを生成し、
+ * 各カードが画面に入ったタイミングで 0 → value までカウントアップする。
+ * IntersectionObserver + rAF の組み合わせで、ライブラリなしでも
+ * 「スクロールで数字が動く」定番の統計セクションが作れる。
+ */
+function initCountUpCards(containerEl, cards) {
+  cards.forEach((card) => {
+    const el = document.createElement('div');
+    el.className = 'stat-card';
+    el.innerHTML = `
+      <div class="stat-value" data-target="${card.value}">0</div>
+      <div class="stat-label">${card.label}</div>
+    `;
+    containerEl.appendChild(el);
+  });
+
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const valueEl = entry.target.querySelector('.stat-value');
+      const target = Number(valueEl.dataset.target);
+      const duration = 1400;
+      const start = performance.now();
+      function tick(now) {
+        const t = Math.min(1, (now - start) / duration);
+        const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+        valueEl.textContent = Math.floor(eased * target).toLocaleString('en-US');
+        if (t < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+      io.unobserve(entry.target);
+    });
+  }, { threshold: 0.5 });
+  containerEl.querySelectorAll('.stat-card').forEach((el) => io.observe(el));
+}
+
+/* ---------------- 初期化 ---------------- */
+document.addEventListener('DOMContentLoaded', () => {
+  splitIntoLines(document.querySelector('.kinetic-title'));
+  requestAnimationFrame(() => document.body.classList.add('is-loaded'));
+
+  document.querySelectorAll('[data-reveal]').forEach(splitIntoWords);
+  observeReveal('[data-reveal]');
+
+  initSignalSection({
+    spacerEl: document.querySelector('.signal-spacer'),
+    canvas: document.getElementById('signalCanvas'),
+    counterEl: document.getElementById('counterValue'),
+    progressBarEl: document.getElementById('signalProgressBar'),
+    target: 2847392,
+  });
+
+  initVerificationTimeline({
+    spacerEl: document.querySelector('.timeline-spacer'),
+    nodesEl: document.getElementById('timelineNodes'),
+    fillEl: document.getElementById('timelineFill'),
+    steps: [
+      { label: 'MEASURE', desc: 'タワーが大気シグナルを継続計測' },
+      { label: 'VERIFY', desc: '独立した手法で数値をクロスチェック' },
+      { label: 'REPORT', desc: '検証済みデータを台帳に記録' },
+      { label: 'TRUST', desc: '誰でも追跡・監査できる状態に' },
+    ],
+  });
+
+  initCountUpCards(document.getElementById('statsGrid'), [
+    { value: 48, label: 'Countries Covered(デモ用ダミー値)' },
+    { value: 1204, label: 'Monitoring Projects(デモ用ダミー値)' },
+    { value: 96000000, label: 'Signals Verified(デモ用ダミー値)' },
+  ]);
+});
+</script>
+</body>
+</html>
