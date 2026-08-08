@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trionn 風 表現デモ — シェーダー霧 / スクロールスクラブ / マグネティックカード</title>
+<style>
+  :root{
+    --bg:#07070b;
+    --fg:#eef0f5;
+    --muted:#8b8f9c;
+    --accent:#8b7cff;
+    --accent2:#4fd1ff;
+    --line:rgba(238,240,245,0.14);
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:var(--bg);
+    color:var(--fg);
+    font-family:"Helvetica Neue",Arial,"Hiragino Sans","Yu Gothic",sans-serif;
+    overflow-x:hidden;
+  }
+  a{ color:inherit; text-decoration:none; }
+  section{ position:relative; padding:0 6vw; }
+
+  /* ---------- ナビゲーション ---------- */
+  header{
+    position:fixed; top:0; left:0; right:0; z-index:100;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:1.4rem 6vw; mix-blend-mode:difference;
+  }
+  header .brand{ font-weight:700; letter-spacing:0.08em; font-size:0.95rem; }
+  header nav{ display:flex; gap:1.6rem; font-size:0.75rem; letter-spacing:0.15em; text-transform:uppercase; color:var(--muted); }
+  header nav a:hover{ color:var(--fg); }
+  #sound-toggle{
+    background:none; border:1px solid var(--line); color:var(--fg);
+    border-radius:999px; width:2.2rem; height:2.2rem; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; font-size:0.9rem;
+  }
+
+  /* ---------- 1. ヒーロー：GLSLシェーダーによる霧 ---------- */
+  #hero{
+    height:100vh; position:relative;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; overflow:hidden;
+  }
+  #fog-canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+  #hero .fallback-gradient{
+    position:absolute; inset:0;
+    background:radial-gradient(ellipse at 30% 30%, rgba(139,124,255,0.35), transparent 60%),
+               radial-gradient(ellipse at 70% 70%, rgba(79,209,255,0.25), transparent 60%),
+               var(--bg);
+  }
+  #hero .hero-inner{ position:relative; z-index:2; }
+  #hero h1{
+    margin:0; font-weight:300; letter-spacing:-0.01em; line-height:1.15;
+    font-size:clamp(2.2rem,6.4vw,5rem);
+  }
+  #hero h1 .char{
+    display:inline-block; opacity:0; transform:translateY(0.6em);
+    transition:opacity 0.6s ease, transform 0.6s ease;
+    transition-delay:calc(var(--i) * 22ms);
+  }
+  #hero h1.is-visible .char{ opacity:1; transform:translateY(0); }
+  #hero p.sub{
+    position:relative; z-index:2; margin:1.1rem 0 0; color:var(--muted);
+    letter-spacing:0.05em; font-size:clamp(0.9rem,1.6vw,1.1rem);
+  }
+  .scroll-cue{
+    position:absolute; bottom:2.4rem; left:50%; transform:translateX(-50%);
+    z-index:2; font-size:0.68rem; letter-spacing:0.3em; text-transform:uppercase; color:var(--muted);
+    display:flex; flex-direction:column; align-items:center; gap:0.6rem;
+  }
+  .scroll-cue .stick{ width:1px; height:2.6rem; background:linear-gradient(var(--line), transparent); position:relative; overflow:hidden; }
+  .scroll-cue .stick::after{
+    content:""; position:absolute; left:0; top:-100%; width:100%; height:100%;
+    background:linear-gradient(var(--accent2), transparent);
+    animation:cue-fall 1.8s ease-in-out infinite;
+  }
+  @keyframes cue-fall{ to{ top:100%; } }
+
+  /* ---------- 2. マニフェスト：行ごとのスクロールリビール ---------- */
+  #manifesto{ padding:14rem 6vw; max-width:920px; margin:0 auto; }
+  #manifesto .line{
+    font-size:clamp(1.4rem,3.2vw,2.4rem); font-weight:300; line-height:1.5;
+    color:var(--muted);
+    opacity:0; transform:translateY(0.4em);
+    transition:opacity 0.8s ease, transform 0.8s ease, color 0.8s ease;
+  }
+  #manifesto .line.is-visible{ opacity:1; transform:translateY(0); color:var(--fg); }
+
+  /* ---------- 3. サービス：ピン留めスクラブセクション ---------- */
+  #services-spacer{ height:300vh; position:relative; }
+  #services-sticky{
+    position:sticky; top:0; height:100vh; overflow:hidden;
+    display:grid; grid-template-columns:1fr 1fr; align-items:center; gap:4vw;
+  }
+  #services-sticky .symbol-stage{ display:flex; align-items:center; justify-content:center; perspective:900px; }
+  #symbol{
+    width:min(34vw,260px); aspect-ratio:1; position:relative; transform-style:preserve-3d;
+    transform:rotateX(-18deg) rotateY(0deg);
+  }
+  #symbol .face{
+    position:absolute; inset:0; border:1px solid var(--line);
+    background:linear-gradient(135deg, rgba(139,124,255,0.16), rgba(79,209,255,0.08));
+    backdrop-filter:blur(2px);
+  }
+  #symbol .face.front{ transform:translateZ(min(17vw,130px)); }
+  #symbol .face.back{ transform:translateZ(calc(min(17vw,130px) * -1)) rotateY(180deg); }
+  #symbol .face.right{ transform:rotateY(90deg) translateZ(min(17vw,130px)); }
+  #symbol .face.left{ transform:rotateY(-90deg) translateZ(min(17vw,130px)); }
+  #symbol .face.top{ transform:rotateX(90deg) translateZ(min(17vw,130px)); }
+  #symbol .face.bottom{ transform:rotateX(-90deg) translateZ(min(17vw,130px)); }
+
+  #services-list{ position:relative; height:14rem; }
+  #services-list .item{
+    position:absolute; inset:0; opacity:0; transform:translateY(1.2rem);
+    transition:opacity 0.5s ease, transform 0.5s ease;
+  }
+  #services-list .item.is-active{ opacity:1; transform:translateY(0); }
+  #services-list .item .index{ color:var(--accent2); font-size:0.8rem; letter-spacing:0.2em; }
+  #services-list .item h3{ font-size:clamp(1.6rem,3vw,2.4rem); font-weight:300; margin:0.6rem 0; }
+  #services-list .item p{ color:var(--muted); max-width:32ch; line-height:1.7; margin:0; }
+  #services-progress{
+    position:absolute; left:0; bottom:2.4rem; width:100%;
+    display:flex; gap:0.5rem; padding:0 6vw;
+  }
+  #services-progress span{ flex:1; height:2px; background:var(--line); position:relative; overflow:hidden; }
+  #services-progress span i{
+    position:absolute; inset:0; background:var(--accent2); transform:scaleX(0); transform-origin:left;
+  }
+
+  /* ---------- 4. ワークグリッド：マグネティック・チルトカード ---------- */
+  #work{ padding:8rem 6vw 10rem; }
+  #work h2{ font-weight:300; font-size:clamp(1.6rem,3vw,2.2rem); margin:0 0 3rem; }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:1.6rem; }
+  .card{
+    aspect-ratio:4/3; border:1px solid var(--line); border-radius:10px; padding:1.4rem;
+    display:flex; flex-direction:column; justify-content:flex-end;
+    background:linear-gradient(160deg, rgba(139,124,255,0.10), rgba(255,255,255,0.02));
+    transition:transform 0.15s ease-out, border-color 0.3s ease;
+    will-change:transform;
+  }
+  .card:hover{ border-color:rgba(139,124,255,0.5); }
+  .card .tag{ color:var(--accent2); font-size:0.7rem; letter-spacing:0.2em; text-transform:uppercase; }
+  .card h3{ font-weight:400; font-size:1.15rem; margin:0.5rem 0 0; }
+
+  footer{ padding:5rem 6vw 4rem; border-top:1px solid var(--line); color:var(--muted); font-size:0.8rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">VERSO*</div>
+  <nav>
+    <a href="#work">Work</a>
+    <a href="#services-spacer">Studio</a>
+    <a href="#manifesto">Manifesto</a>
+  </nav>
+  <button id="sound-toggle" aria-label="アンビエントサウンドの再生/停止">🔇</button>
+</header>
+
+<section id="hero">
+  <canvas id="fog-canvas"></canvas>
+  <div class="fallback-gradient" id="fog-fallback" hidden></div>
+  <div class="hero-inner">
+    <h1 id="hero-title">We build interfaces that breathe.</h1>
+    <p class="sub">AI-assisted creative technology studio — design, motion, code.</p>
+  </div>
+  <div class="scroll-cue"><span>Scroll</span><span class="stick"></span></div>
+</section>
+
+<section id="manifesto">
+  <p class="line">私たちは、静止した画面ではなく、呼吸する体験をつくる。</p>
+  <p class="line">スクロールは説明のための操作ではなく、物語そのものになる。</p>
+  <p class="line">コードとデザインの境界をなくし、両方を同時に考える。</p>
+</section>
+
+<div id="services-spacer">
+  <div id="services-sticky">
+    <div class="symbol-stage">
+      <div id="symbol">
+        <div class="face front"></div>
+        <div class="face back"></div>
+        <div class="face right"></div>
+        <div class="face left"></div>
+        <div class="face top"></div>
+        <div class="face bottom"></div>
+      </div>
+    </div>
+    <div>
+      <div id="services-list">
+        <div class="item" data-index="0">
+          <div class="index">01 / Design</div>
+          <h3>体験のかたちをデザインする</h3>
+          <p>情報設計とビジュアル言語を一体で考え、迷いのないインターフェースをつくります。</p>
+        </div>
+        <div class="item" data-index="1">
+          <div class="index">02 / Motion</div>
+          <h3>意味のある動きを設計する</h3>
+          <p>装飾ではなく、状態の変化を伝えるためにアニメーションを使います。</p>
+        </div>
+        <div class="item" data-index="2">
+          <div class="index">03 / Development</div>
+          <h3>速度と表現を両立させる</h3>
+          <p>WebGLとDOMを使い分け、負荷を抑えながら没入感のある実装をします。</p>
+        </div>
+      </div>
+    </div>
+    <div id="services-progress"><span><i></i></span><span><i></i></span><span><i></i></span></div>
+  </div>
+</div>
+
+<section id="work">
+  <h2>Selected Work</h2>
+  <div class="grid" id="work-grid">
+    <div class="card"><div class="tag">Branding</div><h3>Aurora Health</h3></div>
+    <div class="card"><div class="tag">E-commerce</div><h3>Kioku Studio</h3></div>
+    <div class="card"><div class="tag">Product</div><h3>Northbeam</h3></div>
+    <div class="card"><div class="tag">Interactive</div><h3>Field Notes</h3></div>
+    <div class="card"><div class="tag">Campaign</div><h3>Halcyon</h3></div>
+    <div class="card"><div class="tag">Platform</div><h3>Loop OS</h3></div>
+  </div>
+</section>
+
+<footer>
+  © 2026 VERSO Studio(架空のデモサイト)— 本ページは学習用のオリジナル再現デモです。
+</footer>
+
+<script>
+/* =========================================================================
+ * 1. createFogShader(canvas)
+ *    WebGLの1枚のフラグメントシェーダーで「霧/煙」を表現する。
+ *    - FBM(Fractional Brownian Motion)で自然な濃淡ノイズを作る
+ *    - ドメインワーピング(ノイズでノイズの座標自体を歪ませる)で
+ *      渦を巻くような有機的な流れを出す
+ *    - 時間経過でy座標をずらすことで「上に立ちのぼる」動きにする
+ *    - マウス位置をuniformで渡し、カーソル周辺だけ発光させる
+ *
+ *    使い方: createFogShader(document.querySelector('#fog-canvas'))
+ *    WebGL非対応環境ではfalseを返すので、呼び出し側でフォールバック
+ *    (単色/グラデーション背景など)に切り替える。
+ * ========================================================================= */
+function createFogShader(canvas) {
+  const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  if (!gl) return false;
+
+  const vertexSrc = `
+    attribute vec2 aPosition;
+    void main() {
+      gl_Position = vec4(aPosition, 0.0, 1.0);
+    }
+  `;
+
+  const fragmentSrc = `
+    precision highp float;
+    uniform vec2 uResolution;
+    uniform float uTime;
+    uniform vec2 uMouse;
+
+    float hash(vec2 p) {
+      p = fract(p * vec2(123.34, 456.21));
+      p += dot(p, p + 45.32);
+      return fract(p.x * p.y);
+    }
+
+    float noise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      float a = hash(i);
+      float b = hash(i + vec2(1.0, 0.0));
+      float c = hash(i + vec2(0.0, 1.0));
+      float d = hash(i + vec2(1.0, 1.0));
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+    }
+
+    float fbm(vec2 p) {
+      float sum = 0.0;
+      float amp = 0.5;
+      for (int i = 0; i < 5; i++) {
+        sum += amp * noise(p);
+        p *= 2.02;
+        amp *= 0.5;
+      }
+      return sum;
+    }
+
+    void main() {
+      vec2 uv = gl_FragCoord.xy / uResolution.xy;
+      float aspect = uResolution.x / uResolution.y;
+      vec2 p = uv;
+      p.x *= aspect;
+      p *= 2.6;
+      p.y -= uTime * 0.10;
+
+      vec2 warp = vec2(fbm(p + uTime * 0.06), fbm(p - uTime * 0.05));
+      vec2 warped = p + warp * 1.1;
+      float n = fbm(warped);
+
+      // マウス位置(0〜1, JS側でy軸を反転済み)との距離でカーソル周辺だけ発光させる
+      vec2 mouseScreen = vec2(uMouse.x * aspect, uMouse.y);
+      float glow = smoothstep(0.9, 0.0, distance(vec2(uv.x * aspect, uv.y), mouseScreen));
+
+      vec3 deep = vec3(0.02, 0.02, 0.045);
+      vec3 mid = vec3(0.28, 0.22, 0.55);
+      vec3 hot = vec3(0.30, 0.62, 0.85);
+      vec3 color = mix(deep, mid, smoothstep(0.15, 0.65, n));
+      color = mix(color, hot, smoothstep(0.55, 0.95, n) * 0.6);
+      color += glow * vec3(0.35, 0.45, 0.9) * 0.5;
+
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  function compile(type, src) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, src);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.error(gl.getShaderInfoLog(shader));
+      return null;
+    }
+    return shader;
+  }
+
+  const vs = compile(gl.VERTEX_SHADER, vertexSrc);
+  const fs = compile(gl.FRAGMENT_SHADER, fragmentSrc);
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  // 画面いっぱいの四角形(2枚の三角形)をクリップ空間座標で用意する
+  const quad = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+  const aPosition = gl.getAttribLocation(program, 'aPosition');
+  gl.enableVertexAttribArray(aPosition);
+  gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+
+  const uResolution = gl.getUniformLocation(program, 'uResolution');
+  const uTime = gl.getUniformLocation(program, 'uTime');
+  const uMouse = gl.getUniformLocation(program, 'uMouse');
+
+  const mouse = { target: [0.5, 0.5], current: [0.5, 0.5] };
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  canvas.addEventListener('pointermove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.target[0] = (e.clientX - rect.left) / rect.width;
+    mouse.target[1] = 1.0 - (e.clientY - rect.top) / rect.height;
+  });
+
+  function frame(timeMs) {
+    // マウス位置をなめらかに追従させる(線形補間)
+    mouse.current[0] += (mouse.target[0] - mouse.current[0]) * 0.04;
+    mouse.current[1] += (mouse.target[1] - mouse.current[1]) * 0.04;
+
+    gl.uniform2f(uResolution, canvas.width, canvas.height);
+    gl.uniform1f(uTime, timeMs * 0.001);
+    gl.uniform2f(uMouse, mouse.current[0], mouse.current[1]);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  return true;
+}
+
+/* =========================================================================
+ * 2. splitIntoChars(el) / revealOnEnter(el, options)
+ *    見出しを1文字ずつ<span>で包み、画面に入ったタイミングで
+ *    親要素に is-visible クラスを付ける。CSS側は各文字の
+ *    transition-delay を --i(文字番号)で少しずつずらし、
+ *    文字が波のように順番に浮かび上がる効果を作る。
+ * ========================================================================= */
+function splitIntoChars(el) {
+  const text = el.textContent;
+  el.textContent = '';
+  [...text].forEach((ch, i) => {
+    const span = document.createElement('span');
+    span.className = 'char';
+    span.style.setProperty('--i', i);
+    span.textContent = ch === ' ' ? ' ' : ch;
+    el.appendChild(span);
+  });
+}
+
+function revealOnEnter(el, options = {}) {
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: options.threshold ?? 0.3 });
+  io.observe(el);
+}
+
+/* =========================================================================
+ * 3. initScrollScrub(spacerEl, onProgress)
+ *    高さを確保した spacer 要素が画面を通過する進捗(0〜1)を
+ *    scroll イベントのたびに計算し、コールバックへ渡す。
+ *    GSAP ScrollTrigger の scrub オプションと同じ考え方を
+ *    ネイティブAPIだけで再現したもの。sticky要素の中身を
+ *    この進捗値で動かせば「ピン留めスクロール演出」になる。
+ * ========================================================================= */
+function initScrollScrub(spacerEl, onProgress) {
+  function update() {
+    const rect = spacerEl.getBoundingClientRect();
+    const total = rect.height - window.innerHeight;
+    let progress = total > 0 ? -rect.top / total : 0;
+    progress = Math.min(1, Math.max(0, progress));
+    onProgress(progress);
+  }
+  window.addEventListener('scroll', update, { passive: true });
+  window.addEventListener('resize', update);
+  update();
+}
+
+/* =========================================================================
+ * 4. initTiltCards(cards, maxDeg)
+ *    カード内でのマウス位置を中心からのズレ(-0.5〜0.5)に変換し、
+ *    そのままrotateX/rotateYへ渡す「マグネティック・チルト」効果。
+ *    カーソルが離れたら transform をリセットして平面に戻す。
+ * ========================================================================= */
+function initTiltCards(cards, maxDeg = 10) {
+  cards.forEach((card) => {
+    card.addEventListener('pointermove', (e) => {
+      const rect = card.getBoundingClientRect();
+      const px = (e.clientX - rect.left) / rect.width - 0.5;
+      const py = (e.clientY - rect.top) / rect.height - 0.5;
+      card.style.transform =
+        `perspective(700px) rotateX(${(-py * maxDeg).toFixed(2)}deg) ` +
+        `rotateY(${(px * maxDeg).toFixed(2)}deg) translateZ(6px)`;
+    });
+    card.addEventListener('pointerleave', () => {
+      card.style.transform = '';
+    });
+  });
+}
+
+/* =========================================================================
+ * 5. initAmbientAudio(button)
+ *    Web Audio APIで、2つのオシレーターをわずかにデチューンして
+ *    重ね合わせ、LFO(低周波オシレーター)でローパスフィルターの
+ *    カットオフを揺らすことで「呼吸するようなアンビエントドローン」を
+ *    作る。AudioContextはユーザー操作(クリック)後にのみ生成/再開する
+ *    必要があるため、ボタンのクリックイベント内で初期化する。
+ * ========================================================================= */
+function initAmbientAudio(button) {
+  let ctx = null;
+  let nodes = null;
+  let playing = false;
+
+  function start() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const master = ctx.createGain();
+    master.gain.value = 0;
+    master.connect(ctx.destination);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 700;
+    filter.connect(master);
+
+    const oscA = ctx.createOscillator();
+    oscA.type = 'sine';
+    oscA.frequency.value = 110;
+    const oscB = ctx.createOscillator();
+    oscB.type = 'sine';
+    oscB.frequency.value = 110 * 1.503; // 完全5度に近いデチューンでうねりを作る
+    oscA.connect(filter);
+    oscB.connect(filter);
+
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.08;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 220;
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+
+    oscA.start();
+    oscB.start();
+    lfo.start();
+    master.gain.linearRampToValueAtTime(0.05, ctx.currentTime + 1.4);
+
+    nodes = { master, filter, oscA, oscB, lfo };
+    playing = true;
+  }
+
+  function stop() {
+    if (!nodes) return;
+    const closingCtx = ctx;
+    nodes.master.gain.linearRampToValueAtTime(0, closingCtx.currentTime + 0.6);
+    setTimeout(() => closingCtx.close(), 700);
+    nodes = null;
+    playing = false;
+  }
+
+  button.addEventListener('click', () => {
+    if (!playing) {
+      start();
+      button.textContent = '🔊';
+    } else {
+      stop();
+      button.textContent = '🔇';
+    }
+  });
+}
+
+/* ---------- 初期化 ---------- */
+(function init() {
+  const supportsWebGL = createFogShader(document.getElementById('fog-canvas'));
+  if (!supportsWebGL) {
+    document.getElementById('fog-fallback').hidden = false;
+  }
+
+  const heroTitle = document.getElementById('hero-title');
+  splitIntoChars(heroTitle);
+  requestAnimationFrame(() => heroTitle.classList.add('is-visible'));
+
+  document.querySelectorAll('#manifesto .line').forEach((line) => revealOnEnter(line));
+
+  const symbol = document.getElementById('symbol');
+  const items = document.querySelectorAll('#services-list .item');
+  const bars = document.querySelectorAll('#services-progress i');
+  initScrollScrub(document.getElementById('services-spacer'), (progress) => {
+    symbol.style.transform = `rotateX(-18deg) rotateY(${progress * 320}deg)`;
+
+    const stage = Math.min(items.length - 1, Math.floor(progress * items.length));
+    items.forEach((item, i) => item.classList.toggle('is-active', i === stage));
+
+    bars.forEach((bar, i) => {
+      const local = Math.min(1, Math.max(0, progress * items.length - i));
+      bar.style.transform = `scaleX(${local})`;
+    });
+  });
+
+  initTiltCards(document.querySelectorAll('.card'), 10);
+
+  initAmbientAudio(document.getElementById('sound-toggle'));
+})();
+</script>
+</body>
+</html>
