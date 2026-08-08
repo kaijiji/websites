@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mat Voyce 風 表現デモ — WebGLキネティックタイポグラフィ / カスタムカーソル / スクロール連動グリッド</title>
+<style>
+  :root{
+    --bg:#0b0b0c;
+    --fg:#f4f2ee;
+    --muted:#8f8c86;
+    --accent:#d9ff3f;
+    --line:rgba(244,242,238,0.14);
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:var(--bg);
+    color:var(--fg);
+    font-family:"Helvetica Neue",Arial,"Hiragino Sans","Yu Gothic",sans-serif;
+    overflow-x:hidden;
+  }
+  a{ color:inherit; text-decoration:none; }
+  section{ position:relative; padding:0 6vw; }
+  ::selection{ background:var(--accent); color:#0b0b0c; }
+
+  /* ポインタが使える環境だけネイティブカーソルを消す（タッチ端末では通常のまま） */
+  @media (pointer:fine){
+    body.has-cursor, body.has-cursor a, body.has-cursor button{ cursor:none; }
+  }
+
+  /* ---------- カスタムカーソル ---------- */
+  #cursor-dot, #cursor-ring{
+    position:fixed; top:0; left:0; z-index:999; pointer-events:none;
+    transform:translate(-50%,-50%);
+    display:none;
+  }
+  body.has-cursor #cursor-dot, body.has-cursor #cursor-ring{ display:flex; }
+  #cursor-dot{
+    width:8px; height:8px; border-radius:50%; background:var(--accent);
+  }
+  #cursor-ring{
+    width:44px; height:44px; border-radius:50%; border:1px solid rgba(244,242,238,0.5);
+    align-items:center; justify-content:center;
+    font-size:0.62rem; letter-spacing:0.08em; text-transform:uppercase;
+    transition:width .25s ease, height .25s ease, background .25s ease, border-color .25s ease;
+  }
+  #cursor-ring span{ opacity:0; transition:opacity .2s ease; text-align:center; }
+  #cursor-ring.is-active{
+    width:84px; height:84px; background:var(--accent); border-color:var(--accent); color:#0b0b0c;
+  }
+  #cursor-ring.is-active span{ opacity:1; }
+
+  /* ---------- ヘッダー / タブナビ ---------- */
+  header{
+    position:fixed; top:0; left:0; right:0; z-index:100;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:1.6rem 6vw; mix-blend-mode:difference;
+  }
+  header .brand{ font-weight:800; letter-spacing:-0.02em; font-size:1rem; }
+  #tabs{
+    position:relative; display:flex; gap:0.4rem;
+    font-size:0.72rem; letter-spacing:0.14em; text-transform:uppercase;
+  }
+  #tabs button{
+    position:relative; z-index:2; background:none; border:none; color:var(--muted);
+    padding:0.5rem 0.9rem; font:inherit; letter-spacing:inherit; text-transform:inherit;
+    cursor:pointer; transition:color .3s ease;
+  }
+  #tabs button.is-active{ color:#0b0b0c; }
+  #tabs .tab-pill{
+    position:absolute; top:0; left:0; height:100%; background:var(--accent);
+    border-radius:999px; z-index:1; transition:transform .4s cubic-bezier(.65,0,.35,1), width .4s cubic-bezier(.65,0,.35,1);
+  }
+
+  /* ---------- ヒーロー：WebGLキネティックタイプ ---------- */
+  #hero{
+    height:100vh; position:relative;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  #type-canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+  #hero .fallback-type{
+    position:relative; z-index:2; margin:0; text-align:center;
+    font-weight:900; letter-spacing:-0.03em; line-height:0.92;
+    font-size:clamp(2.6rem,10vw,8rem);
+    will-change:transform;
+  }
+  #hero.no-webgl .fallback-type{ display:block; }
+  #hero:not(.no-webgl) .fallback-type{ display:none; }
+  #hero .sub{
+    position:relative; z-index:2; margin-top:1.4rem; color:var(--muted);
+    font-size:0.85rem; letter-spacing:0.12em; text-transform:uppercase;
+  }
+  #hero .scroll-cue{
+    position:absolute; bottom:2.4rem; left:50%; transform:translateX(-50%);
+    font-size:0.68rem; letter-spacing:0.18em; text-transform:uppercase; color:var(--muted);
+  }
+
+  /* ---------- イントロ：行単位のリビール ---------- */
+  #intro{ padding:16vh 6vw; max-width:960px; margin:0 auto; }
+  #intro .line{
+    font-size:clamp(1.3rem,3vw,2.1rem); font-weight:300; line-height:1.5;
+    overflow:hidden;
+  }
+  #intro .line span{
+    display:inline-block; transform:translateY(110%);
+    transition:transform .8s cubic-bezier(.16,1,.3,1);
+    transition-delay:calc(var(--i, 0) * 70ms);
+  }
+  #intro .line.is-visible span{ transform:translateY(0); }
+  #intro .line strong{ color:var(--accent); font-weight:600; }
+
+  /* ---------- ワークグリッド ---------- */
+  #work{ padding:8vh 6vw 16vh; }
+  #work .grid{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));
+    gap:1px; background:var(--line); border:1px solid var(--line);
+  }
+  .work-card{
+    background:var(--bg); padding:2.2rem 1.6rem; min-height:220px;
+    display:flex; flex-direction:column; justify-content:space-between;
+    opacity:0; transform:translateY(24px);
+    transition:opacity .7s cubic-bezier(.16,1,.3,1), transform .7s cubic-bezier(.16,1,.3,1);
+    transition-delay:calc(var(--i, 0) * 60ms);
+  }
+  .work-card.is-visible{ opacity:1; transform:translateY(0); }
+  .work-card.is-hidden-by-tab{ display:none; }
+  .work-card .num{ font-size:0.7rem; color:var(--muted); letter-spacing:0.1em; }
+  .work-card h3{ margin:1.4rem 0 0.3rem; font-size:1.3rem; font-weight:600; letter-spacing:-0.01em; }
+  .work-card p{ margin:0; color:var(--muted); font-size:0.82rem; }
+
+  /* ---------- フッター ---------- */
+  footer{
+    padding:14vh 6vw 8vh; text-align:center; border-top:1px solid var(--line);
+  }
+  footer .say-hi{
+    display:inline-block; font-weight:900; letter-spacing:-0.02em;
+    font-size:clamp(2rem,7vw,4.4rem);
+  }
+  footer .meta{ margin-top:1.6rem; color:var(--muted); font-size:0.78rem; letter-spacing:0.08em; }
+</style>
+</head>
+<body>
+
+<div id="cursor-dot"></div>
+<div id="cursor-ring"><span></span></div>
+
+<header>
+  <div class="brand">LUCA / VANE</div>
+  <nav id="tabs">
+    <div class="tab-pill"></div>
+    <button type="button" data-cat="personal" class="is-active">Personal</button>
+    <button type="button" data-cat="commercial">Commercial</button>
+    <button type="button" data-cat="collabs">Collabs</button>
+  </nav>
+</header>
+
+<section id="hero" data-cursor-label="Scroll">
+  <canvas id="type-canvas"></canvas>
+  <h1 class="fallback-type" id="fallback-heading">MOTION<br/>&amp; TYPE</h1>
+  <p class="sub">Kinetic typography &amp; motion design</p>
+  <p class="scroll-cue">Scroll ↓</p>
+</section>
+
+<section id="intro">
+  <p class="line"><span>スクロールするほど、文字が揺れて撓んで、また元の形に戻ってくる。</span></p>
+  <p class="line"><span>タイポグラフィを<strong>動くマテリアル</strong>として扱うのが、このデモの主題です。</span></p>
+</section>
+
+<section id="work">
+  <div class="grid" id="work-grid"></div>
+</section>
+
+<footer>
+  <a href="#" class="say-hi" data-cursor-label="Say Hi">SAY HELLO ✻</a>
+  <p class="meta">© Kinetic Type Demo — 学習用オリジナル再現</p>
+</footer>
+
+<script>
+"use strict";
+
+/* =========================================================================
+ * 1. initCustomCursor(): マウス追従カーソル＋ホバー時のラベル付きモーフ
+ *    - ドットは即座に、リングは少し遅れて追従（2段階のlerp）
+ *    - data-cursor-label を持つ要素にホバーすると、リングが拡大してラベル文字を表示する
+ * ========================================================================= */
+function initCustomCursor(){
+  const isFine = window.matchMedia("(pointer:fine)").matches;
+  if(!isFine) return null;
+  document.body.classList.add("has-cursor");
+
+  const dot = document.getElementById("cursor-dot");
+  const ring = document.getElementById("cursor-ring");
+  const ringLabel = ring.querySelector("span");
+
+  const mouse = { x: innerWidth/2, y: innerHeight/2 };
+  const dotPos = { x: mouse.x, y: mouse.y };
+  const ringPos = { x: mouse.x, y: mouse.y };
+
+  addEventListener("mousemove", (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
+
+  document.querySelectorAll("[data-cursor-label]").forEach((el) => {
+    el.addEventListener("mouseenter", () => {
+      ring.classList.add("is-active");
+      ringLabel.textContent = el.getAttribute("data-cursor-label");
+    });
+    el.addEventListener("mouseleave", () => {
+      ring.classList.remove("is-active");
+    });
+  });
+
+  function tick(){
+    dotPos.x += (mouse.x - dotPos.x) * 0.55;
+    dotPos.y += (mouse.y - dotPos.y) * 0.55;
+    ringPos.x += (mouse.x - ringPos.x) * 0.18;
+    ringPos.y += (mouse.y - ringPos.y) * 0.18;
+    dot.style.transform = `translate(${dotPos.x}px, ${dotPos.y}px) translate(-50%,-50%)`;
+    ring.style.transform = `translate(${ringPos.x}px, ${ringPos.y}px) translate(-50%,-50%)`;
+    requestAnimationFrame(tick);
+  }
+  tick();
+}
+
+/* =========================================================================
+ * 2. initScrollSpring(onUpdate): スクロール速度を「ばね」で吸収して
+ *    ストレッチ量(stretch)を作る。 スクロールするほど値が伸び、止まると
+ *    バネの力で 0 へスナップバックしながら収束する。
+ *    onUpdate(stretch) が毎フレーム呼ばれる。
+ * ========================================================================= */
+function initScrollSpring(onUpdate){
+  const STIFFNESS = 0.09;   // バネの硬さ（大きいほど速く戻る）
+  const DAMPING = 0.28;     // 減衰（大きいほど揺り戻しが少ない）
+  const IMPULSE_SCALE = 0.9;// スクロール量に対する影響度
+
+  let lastScrollY = window.scrollY;
+  let stretch = 0;
+  let stretchVel = 0;
+
+  function frame(){
+    const currentY = window.scrollY;
+    const delta = currentY - lastScrollY;
+    lastScrollY = currentY;
+
+    stretchVel += delta * IMPULSE_SCALE * 0.01;
+    const springAccel = -STIFFNESS * stretch - DAMPING * stretchVel;
+    stretchVel += springAccel;
+    stretch += stretchVel;
+
+    onUpdate(stretch);
+    requestAnimationFrame(frame);
+  }
+  frame();
+}
+
+/* =========================================================================
+ * 3. createKineticType(canvas, lines, opts): WebGLでテキストを1枚のテクスチャ
+ *    として描画し、フラグメントシェーダーで uStretch に応じて波状に歪ませる。
+ *    WebGLが使えない環境では false を返す（呼び出し側でCSS版にフォールバック）。
+ *    使い方: const kt = createKineticType(canvas, ["MOTION","& TYPE"]);
+ *            kt.setStretch(value); // 毎フレーム呼ぶ
+ * ========================================================================= */
+function createKineticType(canvas, lines, opts = {}){
+  const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+  if(!gl) return false;
+
+  const VERT = `
+    attribute vec2 aPos;
+    varying vec2 vUv;
+    void main(){
+      vUv = aPos * 0.5 + 0.5;
+      gl_Position = vec4(aPos, 0.0, 1.0);
+    }
+  `;
+  const FRAG = `
+    precision mediump float;
+    varying vec2 vUv;
+    uniform sampler2D uTex;
+    uniform float uStretch;
+    uniform float uTime;
+
+    void main(){
+      vec2 uv = vUv;
+      // 中央からの距離が大きいほど、横方向のズレを強くする（伸び／たわみ）
+      float centerDist = (uv.y - 0.5);
+      float wave = sin(uv.y * 3.14159 * 2.0 + uTime * 1.4) * 0.5 + 0.5;
+      uv.x += uStretch * 0.05 * centerDist * (0.6 + wave);
+      // 縦方向も少しだけスケールさせて「たわみ」を強調
+      uv.y += uStretch * 0.015 * sin(uv.x * 8.0 + uTime);
+
+      if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){
+        gl_FragColor = vec4(0.043, 0.043, 0.047, 1.0);
+        return;
+      }
+      gl_FragColor = texture2D(uTex, uv);
+    }
+  `;
+
+  function compile(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+      console.warn(gl.getShaderInfoLog(s));
+      return null;
+    }
+    return s;
+  }
+  const vs = compile(gl.VERTEX_SHADER, VERT);
+  const fs = compile(gl.FRAGMENT_SHADER, FRAG);
+  if(!vs || !fs) return false;
+
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  const quad = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(program, "aPos");
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  const uStretchLoc = gl.getUniformLocation(program, "uStretch");
+  const uTimeLoc = gl.getUniformLocation(program, "uTime");
+  const uTexLoc = gl.getUniformLocation(program, "uTex");
+
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  // canvas 2Dは左上原点、WebGLのUVは左下原点なので、テクスチャ転送時に上下を合わせる
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+  // オフスクリーン2Dキャンバスにテキストを描き、それをWebGLのテクスチャとして使う
+  const textCanvas = document.createElement("canvas");
+  const tctx = textCanvas.getContext("2d");
+
+  function drawTextTexture(){
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const w = canvas.clientWidth || innerWidth;
+    const h = canvas.clientHeight || innerHeight;
+    textCanvas.width = w * dpr;
+    textCanvas.height = h * dpr;
+    tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tctx.fillStyle = "#0b0b0c";
+    tctx.fillRect(0, 0, w, h);
+    tctx.fillStyle = "#f4f2ee";
+    tctx.textAlign = "center";
+    tctx.textBaseline = "middle";
+    const fontSize = Math.max(40, Math.min(w * 0.11, 150));
+    tctx.font = `900 ${fontSize}px 'Helvetica Neue', Arial, sans-serif`;
+    const lineHeight = fontSize * 0.98;
+    const startY = h/2 - (lines.length - 1) * lineHeight / 2;
+    lines.forEach((line, i) => {
+      tctx.fillText(line, w/2, startY + i * lineHeight);
+    });
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textCanvas);
+  }
+
+  function resize(){
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    drawTextTexture();
+  }
+  addEventListener("resize", resize);
+  resize();
+
+  const startTime = performance.now();
+  function render(stretch){
+    gl.useProgram(program);
+    gl.uniform1f(uStretchLoc, stretch);
+    gl.uniform1f(uTimeLoc, (performance.now() - startTime) / 1000);
+    gl.uniform1i(uTexLoc, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  return {
+    setStretch(value){ render(value); }
+  };
+}
+
+/* =========================================================================
+ * 4. initRevealOnScroll(selector, opts): IntersectionObserverで画面内に
+ *    入った要素へ is-visible クラスを付ける。CSS側の transition-delay と
+ *    --i カスタムプロパティで、要素ごとの段階的なリビールを実現する。
+ * ========================================================================= */
+function initRevealOnScroll(selector){
+  const els = document.querySelectorAll(selector);
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if(entry.isIntersecting){
+        entry.target.classList.add("is-visible");
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.2 });
+  els.forEach((el) => io.observe(el));
+}
+
+/* =========================================================================
+ * 5. buildWorkGrid(container, items): データからワークカードのDOMを組み立てる。
+ *    各カードに --i（表示順）と data-cat（カテゴリ）を付与しておくことで、
+ *    リビール演出とタブ絞り込みの両方から参照できる。
+ * ========================================================================= */
+function buildWorkGrid(container, items){
+  items.forEach((item, i) => {
+    const card = document.createElement("article");
+    card.className = "work-card reveal";
+    card.dataset.cat = item.cat;
+    card.style.setProperty("--i", i % 6);
+    card.innerHTML = `
+      <span class="num">${String(i + 1).padStart(2, "0")}</span>
+      <div>
+        <h3>${item.title}</h3>
+        <p>${item.desc}</p>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+/* =========================================================================
+ * 6. initTabs(nav, cards): タブボタンをクリックすると、対応する data-cat の
+ *    カードだけを表示する。下地のピル（tab-pill）はアクティブなボタンの
+ *    位置・幅にtransformで追従させ、なめらかにスライドさせる。
+ * ========================================================================= */
+function initTabs(nav, cards){
+  const buttons = [...nav.querySelectorAll("button")];
+  const pill = nav.querySelector(".tab-pill");
+
+  function movePill(btn){
+    pill.style.width = btn.offsetWidth + "px";
+    pill.style.transform = `translateX(${btn.offsetLeft}px)`;
+  }
+
+  function applyFilter(cat){
+    cards.forEach((card) => {
+      card.classList.toggle("is-hidden-by-tab", card.dataset.cat !== cat);
+    });
+  }
+
+  buttons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      buttons.forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      movePill(btn);
+      applyFilter(btn.dataset.cat);
+    });
+  });
+
+  const active = nav.querySelector("button.is-active") || buttons[0];
+  requestAnimationFrame(() => movePill(active));
+  applyFilter(active.dataset.cat);
+}
+
+/* =========================================================================
+ * 7. initMagnetic(elements, strength): 要素にマウスが近づくと、中心方向に
+ *    わずかに引き寄せられるように動くマグネティックボタン効果。
+ * ========================================================================= */
+function initMagnetic(elements, strength = 0.35){
+  elements.forEach((el) => {
+    el.addEventListener("mousemove", (e) => {
+      const r = el.getBoundingClientRect();
+      const relX = e.clientX - (r.left + r.width / 2);
+      const relY = e.clientY - (r.top + r.height / 2);
+      el.style.transform = `translate(${relX * strength}px, ${relY * strength}px)`;
+    });
+    el.addEventListener("mouseleave", () => {
+      el.style.transform = "translate(0,0)";
+    });
+  });
+}
+
+/* ---------- 初期化 ---------- */
+(function init(){
+  initCustomCursor();
+
+  const WORKS = [
+    { cat: "personal", title: "Type Scraps", desc: "毎日1文字ずつ作るタイポグラフィ習作シリーズ" },
+    { cat: "personal", title: "Loop Studies", desc: "ループGIFで探る書体のモーション実験" },
+    { cat: "personal", title: "Ink & Grid", desc: "手描きレタリングとグリッドの往復" },
+    { cat: "commercial", title: "Northline Rebrand", desc: "アウトドアブランドのVI／可変フォント設計" },
+    { cat: "commercial", title: "Field Notes App", desc: "アプリのローンチキャンペーン動画一式" },
+    { cat: "commercial", title: "Vantage Audio", desc: "音楽機材メーカーのタイトルアニメーション" },
+    { cat: "collabs", title: "Echo Chamber", desc: "サウンドデザイナーとのAV共作インスタレーション" },
+    { cat: "collabs", title: "Paper Cuts", desc: "イラストレーターとの限定ZINE用モーション" },
+    { cat: "collabs", title: "Night Market", desc: "フェスティバルのオープニングタイトル映像" }
+  ];
+  const grid = document.getElementById("work-grid");
+  buildWorkGrid(grid, WORKS);
+
+  const hero = document.getElementById("hero");
+  const canvas = document.getElementById("type-canvas");
+  const kineticType = createKineticType(canvas, ["MOTION", "& TYPE"]);
+  const fallbackHeading = document.getElementById("fallback-heading");
+  if(!kineticType){
+    hero.classList.add("no-webgl");
+  }
+
+  initScrollSpring((stretch) => {
+    if(kineticType){
+      kineticType.setStretch(stretch);
+    } else {
+      const skew = Math.max(-14, Math.min(14, stretch * 6));
+      fallbackHeading.style.transform = `skewY(${skew}deg) scaleY(${1 + Math.abs(stretch) * 0.01})`;
+    }
+  });
+
+  initRevealOnScroll(".line");
+  initRevealOnScroll(".reveal");
+  initTabs(document.getElementById("tabs"), [...grid.querySelectorAll(".work-card")]);
+  initMagnetic(document.querySelectorAll("[data-cursor-label]"), 0.3);
+})();
+</script>
+</body>
+</html>
