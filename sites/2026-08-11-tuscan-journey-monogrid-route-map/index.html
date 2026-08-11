@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IL CAMMINO — 旅路の地図で辿るスクロールストーリー(再現デモ)</title>
+<style>
+  :root{
+    --cream:#F5EEE1;
+    --paper:#EFE4D0;
+    --ink:#3B2E23;
+    --terracotta:#C1633B;
+    --olive:#6B7A4F;
+    --sky:#8FA6B2;
+    --gold:#C9A227;
+    --line:rgba(59,46,35,.18);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:"Hiragino Mincho ProN","Yu Mincho",serif;
+    background:var(--cream);
+    color:var(--ink);
+    overflow-x:hidden;
+  }
+
+  /* ---------- 背景パララックス層(固定・スクロールで各層が異なる速さで動く) ---------- */
+  .scene{
+    position:fixed;
+    inset:0;
+    z-index:0;
+    overflow:hidden;
+    pointer-events:none;
+  }
+  .layer{
+    position:absolute;
+    left:0; right:0;
+    will-change:transform;
+  }
+  .layer-sky{
+    top:0; height:120%;
+    background:linear-gradient(180deg, #EFE9DC 0%, var(--sky) 120%);
+    opacity:.55;
+  }
+  .layer-sun{
+    top:8%; left:50%;
+    width:140px; height:140px;
+    margin-left:-70px;
+    border-radius:50%;
+    background:radial-gradient(circle, #FFF6DE 0%, var(--gold) 70%, transparent 72%);
+    opacity:.8;
+  }
+  .layer-hills-far{
+    bottom:0; height:46%;
+    background:
+      radial-gradient(120px 90px at 10% 100%, var(--olive) 0%, transparent 60%),
+      radial-gradient(180px 120px at 35% 100%, var(--olive) 0%, transparent 60%),
+      radial-gradient(220px 140px at 65% 100%, var(--olive) 0%, transparent 60%),
+      radial-gradient(160px 100px at 90% 100%, var(--olive) 0%, transparent 60%);
+    opacity:.28;
+  }
+  .layer-hills-near{
+    bottom:0; height:32%;
+    background:
+      radial-gradient(200px 130px at 20% 100%, var(--terracotta) 0%, transparent 62%),
+      radial-gradient(260px 160px at 55% 100%, var(--terracotta) 0%, transparent 62%),
+      radial-gradient(220px 140px at 85% 100%, var(--terracotta) 0%, transparent 62%);
+    opacity:.22;
+  }
+  .layer-cypress{
+    bottom:0; height:22%;
+  }
+  .cypress{
+    position:absolute; bottom:0;
+    width:10px; border-radius:8px 8px 2px 2px;
+    background:var(--ink);
+    opacity:.35;
+  }
+
+  /* ---------- ルートマップ(固定パネル。旅の全行程と現在地を常に表示) ---------- */
+  .route-panel{
+    position:fixed;
+    right:28px; top:50%;
+    transform:translateY(-50%);
+    width:64px;
+    z-index:20;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+  }
+  .route-panel svg{ overflow:visible; }
+  .route-stop-label{
+    position:absolute;
+    right:78px;
+    transform:translateY(-50%);
+    font-size:11px;
+    letter-spacing:.05em;
+    color:var(--ink);
+    background:var(--cream);
+    padding:3px 8px;
+    border:1px solid var(--line);
+    border-radius:3px;
+    white-space:nowrap;
+    opacity:0;
+    transition:opacity .35s ease;
+  }
+  .route-stop-label.active{ opacity:1; }
+
+  @media (max-width:760px){
+    .route-panel{
+      right:auto; left:0; top:0; transform:none;
+      width:100%; height:46px;
+      flex-direction:row;
+    }
+    .route-stop-label{ display:none; }
+  }
+
+  /* ---------- コンテンツ ---------- */
+  main{ position:relative; z-index:5; }
+  section{
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    justify-content:center;
+    padding:8vh 9vw;
+  }
+  .hero h1{
+    font-size:clamp(34px,6vw,64px);
+    letter-spacing:.06em;
+    margin:0 0 14px;
+  }
+  .hero p{
+    font-size:15px;
+    color:var(--ink);
+    opacity:.75;
+    max-width:36em;
+    line-height:1.9;
+  }
+  .scroll-hint{
+    margin-top:60px;
+    font-size:12px;
+    letter-spacing:.2em;
+    opacity:.6;
+  }
+
+  .stop{
+    max-width:560px;
+  }
+  .stop .num{
+    font-size:12px;
+    letter-spacing:.3em;
+    color:var(--terracotta);
+    margin-bottom:10px;
+  }
+  .stop h2{
+    font-size:clamp(26px,4vw,40px);
+    margin:0 0 18px;
+    opacity:0;
+    transform:translateY(24px);
+    transition:opacity .8s ease, transform .8s ease;
+  }
+  .stop p{
+    font-size:15px;
+    line-height:2;
+    opacity:0;
+    transform:translateY(24px);
+    transition:opacity .8s ease .12s, transform .8s ease .12s;
+  }
+  .stop.is-visible h2,
+  .stop.is-visible p{
+    opacity:1;
+    transform:none;
+  }
+
+  .peek-btn{
+    margin-top:26px;
+    font:inherit;
+    font-size:13px;
+    letter-spacing:.08em;
+    padding:10px 20px;
+    border:1px solid var(--ink);
+    background:transparent;
+    color:var(--ink);
+    cursor:pointer;
+    border-radius:999px;
+    transition:background .25s, color .25s;
+    opacity:0;
+    transform:translateY(24px);
+    transition:opacity .8s ease .24s, transform .8s ease .24s, background .25s, color .25s;
+  }
+  .stop.is-visible .peek-btn{ opacity:1; transform:none; }
+  .peek-btn:hover{ background:var(--ink); color:var(--cream); }
+
+  footer{
+    padding:10vh 9vw 16vh;
+    font-size:13px;
+    opacity:.6;
+    max-width:36em;
+  }
+
+  /* ---------- 工芸ディテールカード(モーダル) ---------- */
+  .modal-back{
+    position:fixed; inset:0;
+    background:rgba(59,46,35,.45);
+    display:flex; align-items:center; justify-content:center;
+    z-index:100;
+    opacity:0; pointer-events:none;
+    transition:opacity .3s ease;
+  }
+  .modal-back.open{ opacity:1; pointer-events:auto; }
+  .modal-card{
+    background:var(--paper);
+    max-width:420px;
+    width:88%;
+    padding:36px 32px;
+    border-radius:6px;
+    box-shadow:0 30px 60px rgba(0,0,0,.25);
+    transform:translateY(18px) scale(.98);
+    transition:transform .3s ease;
+  }
+  .modal-back.open .modal-card{ transform:none; }
+  .modal-card h3{ margin:0 0 12px; font-size:20px; }
+  .modal-card p{ font-size:14px; line-height:1.9; margin:0 0 20px; }
+  .modal-close{
+    font:inherit; font-size:12px; letter-spacing:.08em;
+    background:none; border:none; color:var(--terracotta);
+    cursor:pointer; padding:0;
+  }
+
+  /* ---------- アンビエントサウンド トグル ---------- */
+  .sound-toggle{
+    position:fixed; left:24px; bottom:24px; z-index:20;
+    width:52px; height:52px; border-radius:50%;
+    border:1px solid var(--ink);
+    background:var(--cream);
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    font-size:18px;
+  }
+  .sound-toggle[data-on="true"]{ background:var(--ink); color:var(--cream); }
+</style>
+</head>
+<body>
+
+<!-- 固定背景: パララックスするトスカーナの丘・糸杉・太陽 -->
+<div class="scene" aria-hidden="true">
+  <div class="layer layer-sky"     data-speed="0.05"></div>
+  <div class="layer layer-sun"     data-speed="0.12"></div>
+  <div class="layer layer-hills-far"  data-speed="0.20"></div>
+  <div class="layer layer-hills-near" data-speed="0.35"></div>
+  <div class="layer layer-cypress" data-speed="0.5" id="cypressLayer"></div>
+</div>
+
+<!-- 固定ルートマップ: 旅の行程を1本の線で示し、現在地マーカーがスクロールに連動して進む -->
+<div class="route-panel" id="routePanel">
+  <svg width="20" height="260" viewBox="0 0 20 260">
+    <path id="routeTrackBg" d="M10,6 C -6,50 26,90 10,130 C -6,170 26,210 10,254"
+          fill="none" stroke="var(--line)" stroke-width="2"/>
+    <path id="routeTrackFg" d="M10,6 C -6,50 26,90 10,130 C -6,170 26,210 10,254"
+          fill="none" stroke="var(--terracotta)" stroke-width="2"
+          stroke-dasharray="1" stroke-dashoffset="1"/>
+    <circle id="routeDot" r="5" fill="var(--terracotta)"/>
+  </svg>
+</div>
+
+<main>
+  <section class="hero">
+    <h1>IL CAMMINO</h1>
+    <p>フィレンツェの工房から、丘陵のヴィッラまで。糸を紡ぐ手仕事をたどる、小さな旅のはじまり。</p>
+    <div class="scroll-hint">S C R O L L ↓</div>
+  </section>
+
+  <section class="stop" data-stop="0" data-label="Firenze — 織りの工房">
+    <div class="num">01 — FIRENZE</div>
+    <h2>織りの工房</h2>
+    <p>石畳の路地を抜けた先、古い工房で職人が手織り機に向かう。経糸と緯糸が交わるたび、幾何学模様がゆっくりと布の上に立ち上がっていく。</p>
+    <button class="peek-btn" data-craft="0">工房を覗く →</button>
+  </section>
+
+  <section class="stop" data-stop="1" data-label="Le Colline — 糸を紡ぐ丘">
+    <div class="num">02 — LE COLLINE</div>
+    <h2>糸を紡ぐ丘</h2>
+    <p>糸杉が並ぶ丘の道を進むと、羊毛と絹の糸が天日で干されている。風になびく糸の色は、その日の光によって少しずつ表情を変える。</p>
+    <button class="peek-btn" data-craft="1">丘を覗く →</button>
+  </section>
+
+  <section class="stop" data-stop="2" data-label="La Villa — 紋様の間">
+    <div class="num">03 — LA VILLA</div>
+    <h2>紋様の間</h2>
+    <p>ルネサンス様式のヴィッラ、天井を見上げると、幾何学とアカンサスの装飾が織物の意匠のもとになっていることに気づく。</p>
+    <button class="peek-btn" data-craft="2">天井を覗く →</button>
+  </section>
+
+  <section class="stop" data-stop="3" data-label="Il Ritorno — 旅の終わりに">
+    <div class="num">04 — IL RITORNO</div>
+    <h2>旅の終わりに</h2>
+    <p>工房から丘へ、丘からヴィッラへ。手仕事をたどった旅は、1枚の布として静かに完成する。</p>
+    <button class="peek-btn" data-craft="3">仕上がりを覗く →</button>
+  </section>
+
+  <footer>
+    ここまでが「IL CAMMINO」の再現デモです。実在サイトのソースコードは含まれておらず、観察した表現技法をもとにゼロから作成したオリジナル実装です。詳しくは同フォルダの README.md をご覧ください。
+  </footer>
+</main>
+
+<!-- 工芸ディテールのモーダル -->
+<div class="modal-back" id="modalBack">
+  <div class="modal-card">
+    <h3 id="modalTitle"></h3>
+    <p id="modalBody"></p>
+    <button class="modal-close" id="modalClose">閉じる ×</button>
+  </div>
+</div>
+
+<div class="sound-toggle" id="soundToggle" data-on="false" title="環境音を再生/停止">♪</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* =====================================================================
+   * IL CAMMINO 再現デモ — 使い方
+   * このファイルをそのまま保存してブラウザで開けば動作します。
+   * 自分のプロジェクトへ移植する場合は、以下の4つの init関数と対応する
+   * HTML/CSSをそのままコピーしてください。それぞれ独立して動作します。
+   *   1. initParallaxLayers() … 背景イラストのパララックス
+   *   2. initRouteMap()       … スクロール進捗を辿る固定ルートマップ
+   *   3. initSectionReveal()  … 各セクションのフェードイン + 工芸カードのモーダル
+   *   4. initAmbientAudio()   … Web Audio APIによる環境音トグル
+   * ===================================================================== */
+
+  var scrollFrac = 0; // 0〜1: 「停留地エリア」内でのスクロール進捗(ヒーロー・フッターの高さに影響されない)
+  var stopsTop = 0, stopsRange = 1;
+
+  function measureStopsRange(){
+    var stops = document.querySelectorAll(".stop");
+    var first = stops[0], last = stops[stops.length - 1];
+    stopsTop = first.offsetTop;
+    stopsRange = (last.offsetTop + last.offsetHeight) - stopsTop || 1;
+  }
+
+  // 「今どのあたりを旅しているか」は、画面中央がstop群のどの位置に
+  // あるかで決める(セクションの高さがまちまちでも実際の見た目と同期する)
+  function updateScrollFrac(){
+    var viewportCenter = window.scrollY + window.innerHeight * 0.5;
+    scrollFrac = Math.min(1, Math.max(0, (viewportCenter - stopsTop) / stopsRange));
+  }
+
+  /* ---------------------------------------------------------------------
+   * 1. 背景イラストのパララックス
+   * data-speed属性(0〜1)が大きい層ほど、スクロールに対して大きく動く
+   * = 手前(糸杉)ほど速く、奥(空)ほどゆっくり流れる遠近感を作る
+   * ------------------------------------------------------------------- */
+  var frameCallbacks = []; // 毎フレーム(スクロール時)実行する更新関数を集約する
+
+  function initParallaxLayers(){
+    var layers = Array.prototype.slice.call(document.querySelectorAll(".layer"));
+
+    // 糸杉を等間隔にランダムな高さで生成(装飾用。件数や見た目は自由に調整可)
+    var cypressLayer = document.getElementById("cypressLayer");
+    for (var i = 0; i < 14; i++){
+      var c = document.createElement("div");
+      c.className = "cypress";
+      var h = 60 + Math.round(Math.sin(i * 1.7) * 20 + 20);
+      c.style.left = (i * 7.5 + 2) + "%";
+      c.style.height = h + "px";
+      cypressLayer.appendChild(c);
+    }
+
+    function apply(){
+      var y = window.scrollY;
+      layers.forEach(function(layer){
+        var speed = parseFloat(layer.getAttribute("data-speed")) || 0;
+        layer.style.transform = "translateY(" + (y * speed * -1) + "px)";
+      });
+    }
+    apply();
+    frameCallbacks.push(apply);
+    window.addEventListener("resize", apply);
+  }
+
+  /* ---------------------------------------------------------------------
+   * 2. 固定ルートマップ: SVGパスの長さを取得し、
+   *    stroke-dashoffset とマーカー座標をスクロール進捗に同期させる
+   * ------------------------------------------------------------------- */
+  function initRouteMap(){
+    var fg = document.getElementById("routeTrackFg");
+    var dot = document.getElementById("routeDot");
+    var panel = document.getElementById("routePanel");
+    var stops = Array.prototype.slice.call(document.querySelectorAll(".stop"));
+    var len = fg.getTotalLength();
+    fg.setAttribute("stroke-dasharray", len);
+
+    // 各停留地(01〜04)のラベルを、SVG上のおおよその位置に配置する
+    var labels = stops.map(function(stop, i){
+      var frac = stops.length > 1 ? i / (stops.length - 1) : 0;
+      var pt = fg.getPointAtLength(frac * len);
+      var el = document.createElement("div");
+      el.className = "route-stop-label";
+      el.textContent = stop.getAttribute("data-label");
+      el.style.top = pt.y + "px";
+      panel.appendChild(el);
+      return { el: el, frac: frac };
+    });
+
+    function apply(){
+      // 旅した distance だけ実線を残し、その先は薄い下地の線のまま
+      fg.setAttribute("stroke-dashoffset", len * (1 - scrollFrac));
+      var pt = fg.getPointAtLength(scrollFrac * len);
+      dot.setAttribute("cx", pt.x);
+      dot.setAttribute("cy", pt.y);
+
+      // 現在地に最も近い停留地のラベルだけを表示する
+      var nearest = labels.reduce(function(best, l){
+        return Math.abs(l.frac - scrollFrac) < Math.abs(best.frac - scrollFrac) ? l : best;
+      }, labels[0]);
+      labels.forEach(function(l){ l.el.classList.toggle("active", l === nearest); });
+    }
+    apply();
+    frameCallbacks.push(apply);
+  }
+
+  /* ---------------------------------------------------------------------
+   * 3. 各停留地セクションのフェードイン表示 + 工芸ディテールのモーダル
+   * ------------------------------------------------------------------- */
+  var CRAFT_DETAILS = [
+    { title: "織りの工房にて", body: "経糸を張り、緯糸をくぐらせるたびに、幾何学模様が布の上に少しずつ姿を現す。1枚の布が仕上がるまでには、幾日もの時間がかけられている。" },
+    { title: "丘で干される糸", body: "染め上げられた糸は、風通しの良い丘の上で自然乾燥される。天候や日差しによって、同じ染料でも仕上がりの色合いが微妙に変わる。" },
+    { title: "天井の紋様", body: "ヴィッラの天井装飾に使われた幾何学モチーフは、そのまま織物の意匠へと引き継がれている。建築と手仕事は、同じ美意識でつながっている。" },
+    { title: "仕上がった布", body: "工房・丘・ヴィッラ、それぞれの土地の手仕事が重なり合い、1枚の布として結晶する。旅の記憶がそのまま模様として残る。" }
+  ];
+
+  function initSectionReveal(){
+    var stops = document.querySelectorAll(".stop");
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if (entry.isIntersecting) entry.target.classList.add("is-visible");
+      });
+    }, { threshold: 0.4 });
+    stops.forEach(function(el){ io.observe(el); });
+
+    var modalBack = document.getElementById("modalBack");
+    var modalTitle = document.getElementById("modalTitle");
+    var modalBody = document.getElementById("modalBody");
+
+    document.querySelectorAll(".peek-btn").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        var d = CRAFT_DETAILS[parseInt(btn.getAttribute("data-craft"), 10)];
+        modalTitle.textContent = d.title;
+        modalBody.textContent = d.body;
+        modalBack.classList.add("open");
+      });
+    });
+    document.getElementById("modalClose").addEventListener("click", function(){
+      modalBack.classList.remove("open");
+    });
+    modalBack.addEventListener("click", function(e){
+      if (e.target === modalBack) modalBack.classList.remove("open");
+    });
+  }
+
+  /* ---------------------------------------------------------------------
+   * 4. Web Audio APIで合成する環境音(風/虫の音の代わりの持続音)
+   *    外部音声ファイルは一切使わず、オシレーター+フィルターのみで生成
+   * ------------------------------------------------------------------- */
+  function initAmbientAudio(){
+    var toggle = document.getElementById("soundToggle");
+    var ctx = null, nodes = null, playing = false;
+
+    function build(){
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+      // 低い持続音(ドローン): 2つのデチューンしたsawオシレーターを重ねる
+      var master = ctx.createGain();
+      master.gain.value = 0;
+      master.connect(ctx.destination);
+
+      var osc1 = ctx.createOscillator();
+      osc1.type = "sawtooth"; osc1.frequency.value = 55;
+      var osc2 = ctx.createOscillator();
+      osc2.type = "sawtooth"; osc2.frequency.value = 55.6; // わずかにデチューンしてうねりを作る
+
+      var lp = ctx.createBiquadFilter();
+      lp.type = "lowpass"; lp.frequency.value = 380;
+
+      // 風のようなホワイトノイズ(バッファを自前生成)
+      var noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      var data = noiseBuf.getChannelData(0);
+      for (var i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.6;
+      var noise = ctx.createBufferSource();
+      noise.buffer = noiseBuf; noise.loop = true;
+      var noiseFilter = ctx.createBiquadFilter();
+      noiseFilter.type = "bandpass"; noiseFilter.frequency.value = 700; noiseFilter.Q.value = 0.6;
+      var noiseGain = ctx.createGain();
+      noiseGain.gain.value = 0.18;
+
+      osc1.connect(lp); osc2.connect(lp); lp.connect(master);
+      noise.connect(noiseFilter); noiseFilter.connect(noiseGain); noiseGain.connect(master);
+
+      osc1.start(); osc2.start(); noise.start();
+      nodes = { master: master };
+    }
+
+    toggle.addEventListener("click", function(){
+      if (!ctx) build();
+      if (ctx.state === "suspended") ctx.resume();
+      playing = !playing;
+      toggle.setAttribute("data-on", String(playing));
+      var target = playing ? 0.35 : 0;
+      nodes.master.gain.cancelScheduledValues(ctx.currentTime);
+      nodes.master.gain.linearRampToValueAtTime(target, ctx.currentTime + 0.8);
+    });
+  }
+
+  /* ---------------------------------------------------------------------
+   * スクロール進捗の更新 → 各表現(パララックス/ルートマップ)への反映を
+   * 常にこの順番で1フレームに1回だけ実行する(rAFで間引き)
+   * ------------------------------------------------------------------- */
+  function onFrame(){
+    updateScrollFrac();
+    frameCallbacks.forEach(function(fn){ fn(); });
+  }
+  var ticking = false;
+  function requestFrame(){
+    if (!ticking){
+      requestAnimationFrame(function(){ onFrame(); ticking = false; });
+      ticking = true;
+    }
+  }
+  window.addEventListener("scroll", requestFrame, { passive:true });
+  window.addEventListener("resize", function(){ measureStopsRange(); onFrame(); });
+
+  measureStopsRange();
+  initParallaxLayers();
+  initRouteMap();
+  initSectionReveal();
+  initAmbientAudio();
+  onFrame();
+})();
+</script>
+</body>
+</html>
