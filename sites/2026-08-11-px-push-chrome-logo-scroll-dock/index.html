@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ALWAYS ON* — 再現デモ（PX PUSH 風 クロームロゴ・スクロールドッキング）</title>
+<style>
+  /* ============================================================
+     このファイルは学習用のオリジナル再現デモです。
+     PX PUSH (https://pxpush.com/) の実際のソースコード・デザイン・
+     ロゴ・文言・画像は一切コピーしていません。
+     Codrops記事等の技術解説から読み取れる「作り方の考え方」だけを
+     参考にし、架空のスタジオ「ALWAYS ON*」としてゼロから
+     独自に実装したデモです（詳細は README.md 参照）。
+     ============================================================ */
+
+  :root{
+    --bg:#121110;
+    --bg-soft:#1a1917;
+    --ink:#efece2;
+    --ink-dim:#9a958a;
+    --line:#38352f;
+    --accent:#ff9d2e;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: "Helvetica Neue", Arial, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  }
+
+  *{ box-sizing:border-box; }
+
+  html,body{
+    margin:0; padding:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    overflow-x:hidden;
+  }
+
+  a{ color:inherit; text-decoration:none; }
+
+  /* ---------- 背景のCRT風スキャンライン + 粒子ノイズ ----------
+     実サイトが持つ「古いCRTモニターで見ているような質感」を、
+     繰り返しグラデーションと canvas 生成ノイズテクスチャだけで
+     軽量に近似する装飾レイヤー。表現の主役ではないのでシンプルに。 */
+  #crt-overlay{
+    position:fixed; inset:0; z-index:50;
+    pointer-events:none;
+    background-image:
+      repeating-linear-gradient(rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,.10) 3px),
+      radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,.35) 100%);
+    mix-blend-mode:overlay;
+    opacity:.55;
+  }
+  #noise-overlay{
+    position:fixed; inset:0; z-index:49;
+    pointer-events:none;
+    opacity:.05;
+    mix-blend-mode:overlay;
+  }
+
+  /* ---------- ヘッダー：クロームマークがドッキングする受け皿 ---------- */
+  header{
+    position:fixed; top:0; left:0; width:100%; height:64px;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 28px 0 92px; /* 左側はドッキングするロゴマーク用に空けておく */
+    z-index:40;
+    background:rgba(18,17,16,0);
+    border-bottom:1px solid rgba(56,53,47,0);
+    backdrop-filter:blur(0px);
+    transition:background .3s ease, border-color .3s ease, backdrop-filter .3s ease;
+  }
+  header.docked{
+    background:rgba(18,17,16,.72);
+    border-bottom:1px solid var(--line);
+    backdrop-filter:blur(6px);
+  }
+  header .wordmark{
+    font-family:var(--mono);
+    font-size:13px;
+    letter-spacing:.08em;
+    color:var(--ink-dim);
+    opacity:0;
+    transform:translateY(-4px);
+    transition:opacity .35s ease, transform .35s ease;
+  }
+  header.docked .wordmark{ opacity:1; transform:translateY(0); }
+  header nav{ display:flex; gap:26px; font-family:var(--mono); font-size:12px; letter-spacing:.06em; }
+  header nav a{ color:var(--ink-dim); opacity:0; transform:translateY(-4px); transition:opacity .35s ease .05s, transform .35s ease .05s, color .2s; }
+  header.docked nav a{ opacity:1; transform:translateY(0); }
+  header nav a:hover{ color:var(--accent); }
+
+  /* ロゴマークの上に重ねる、クリックでトップへ戻すための透明な当たり判定 */
+  #home-hit{
+    position:fixed; top:6px; left:8px; width:76px; height:52px;
+    z-index:41; cursor:pointer; background:transparent;
+  }
+
+  /* ---------- WebGL キャンバス：ヒーロー中央〜ヘッダー左上まで移動する ---------- */
+  #gl-canvas{
+    position:fixed; inset:0; width:100vw; height:100vh;
+    z-index:20; display:block; pointer-events:none;
+  }
+
+  section{ position:relative; z-index:10; padding:0 28px; }
+
+  #hero{
+    position:relative; z-index:25; /* キャンバス(z-index:20)より前面に出し、テキストが常に読めるようにする */
+    height:100vh;
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-end;
+    text-align:center; padding-bottom:9vh;
+  }
+  #hero .eyebrow{
+    font-family:var(--mono); font-size:12px; letter-spacing:.12em;
+    color:var(--ink-dim); margin-bottom:14px; text-transform:uppercase;
+  }
+  #hero h1{
+    font-size:clamp(30px, 6vw, 64px);
+    line-height:1.05; margin:0 0 18px; font-weight:600;
+  }
+  #hero h1 em{ color:var(--accent); font-style:normal; }
+  #hero .scroll-hint{
+    font-family:var(--mono); font-size:11px; color:var(--ink-dim);
+    letter-spacing:.1em; display:flex; flex-direction:column; align-items:center; gap:8px;
+  }
+  #hero .scroll-hint .stick{ width:1px; height:30px; background:linear-gradient(var(--accent), transparent); animation:stickFall 1.6s ease-in-out infinite; }
+  @keyframes stickFall{ 0%{opacity:0; transform:translateY(-6px);} 40%{opacity:1;} 100%{opacity:0; transform:translateY(10px);} }
+
+  /* ---------- About: 官僚的な「承認済み」スタンプ演出 ---------- */
+  #about{
+    max-width:920px; margin:0 auto; padding-top:14vh; padding-bottom:16vh;
+    display:grid; grid-template-columns:1fr auto; gap:40px; align-items:start;
+  }
+  #about p{ font-size:15px; line-height:1.9; color:var(--ink-dim); max-width:52ch; }
+  #about .lead{ font-size:20px; color:var(--ink); margin-bottom:18px; line-height:1.6; }
+  .stamp{
+    width:132px; height:132px; border:2px solid var(--accent); border-radius:50%;
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    transform:rotate(-14deg); flex:none;
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.04em; color:var(--accent);
+    padding:14px; line-height:1.5; opacity:.85;
+  }
+  .specs{ font-family:var(--mono); font-size:12px; color:var(--ink-dim); margin-top:26px; display:grid; gap:6px; }
+  .specs b{ color:var(--ink); }
+
+  /* ---------- Journal ---------- */
+  #journal{ max-width:920px; margin:0 auto; padding-bottom:20vh; }
+  #journal h2{ font-family:var(--mono); font-size:12px; letter-spacing:.1em; color:var(--ink-dim); text-transform:uppercase; margin-bottom:22px; }
+  .entry{
+    display:flex; align-items:baseline; justify-content:space-between;
+    padding:20px 4px; border-top:1px solid var(--line); cursor:pointer;
+  }
+  #journal .entry:last-child{ border-bottom:1px solid var(--line); }
+  .entry:hover .entry-title{ color:var(--accent); }
+  .entry-date{ font-family:var(--mono); font-size:11px; color:var(--ink-dim); width:90px; flex:none; }
+  .entry-title{ font-size:18px; transition:color .2s; flex:1; }
+  .entry-arrow{ font-family:var(--mono); color:var(--ink-dim); }
+
+  footer{ max-width:920px; margin:0 auto; padding-bottom:12vh; display:flex; justify-content:space-between; font-family:var(--mono); font-size:11px; color:var(--ink-dim); }
+
+  /* ---------- 記事オーバーレイ・ドロワー ---------- */
+  #drawer-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:60;
+    opacity:0; pointer-events:none; transition:opacity .3s ease;
+  }
+  #drawer-backdrop.open{ opacity:1; pointer-events:auto; }
+  #drawer{
+    position:fixed; top:0; right:0; height:100vh; width:min(440px,88vw);
+    background:var(--bg-soft); border-left:1px solid var(--line);
+    z-index:61; transform:translateX(100%); transition:transform .45s cubic-bezier(.17,.84,.34,1);
+    padding:80px 34px 34px; overflow-y:auto;
+  }
+  #drawer.open{ transform:translateX(0); }
+  #drawer .close{ position:absolute; top:24px; right:28px; font-family:var(--mono); font-size:12px; color:var(--ink-dim); cursor:pointer; }
+  #drawer .close:hover{ color:var(--accent); }
+  #drawer .drawer-date{ font-family:var(--mono); font-size:11px; color:var(--accent); margin-bottom:10px; }
+  #drawer h3{ font-size:24px; margin:0 0 18px; line-height:1.3; }
+  #drawer p{ font-size:14px; line-height:1.9; color:var(--ink-dim); }
+</style>
+</head>
+<body>
+
+<div id="crt-overlay"></div>
+<canvas id="noise-overlay"></canvas>
+
+<header id="site-header">
+  <div class="wordmark">ALWAYS ON*</div>
+  <nav>
+    <a href="#about">About</a>
+    <a href="#journal">Journal</a>
+    <a href="#">Contact</a>
+  </nav>
+</header>
+<div id="home-hit" title="トップへ戻る"></div>
+
+<canvas id="gl-canvas"></canvas>
+
+<section id="hero">
+  <div class="eyebrow">Design subscription for machines that never sleep (fictional demo)</div>
+  <h1>An old machine,<br>running <em>forever</em>.</h1>
+  <div class="scroll-hint"><div class="stick"></div>SCROLL</div>
+</section>
+
+<section id="about">
+  <div>
+    <p class="lead">We are a subscription design department for teams who never stop shipping — bureaucratic language, office equipment, and software packaging, updated for a browser.</p>
+    <p>The mark above is machined once, then it never really leaves you: it spins a little faster whenever you scroll faster, slows down when you stop, and reverses when you scroll back up — then it clocks in at its desk in the header for the rest of your visit.</p>
+    <div class="specs">
+      <div><b>STATUS//</b> ALWAYS ON</div>
+      <div><b>UNIT//</b> 09</div>
+      <div><b>REVISION//</b> 2026.08</div>
+    </div>
+  </div>
+  <div class="stamp">APPROVED<br>FOR<br>CONTINUED<br>USE</div>
+</section>
+
+<section id="journal">
+  <h2>Journal</h2>
+  <div class="entry" data-title="Notes on always-on branding" data-date="2026.07.02" data-body="A short note on why we like machines that hum quietly in the background instead of shouting for attention — and why the mark in this header spins a little faster whenever you scroll faster.">
+    <span class="entry-date">2026.07.02</span>
+    <span class="entry-title">Notes on always-on branding</span>
+    <span class="entry-arrow">→</span>
+  </div>
+  <div class="entry" data-title="The department is open" data-date="2026.06.18" data-body="This entry opens as a drawer instead of a new page, so reading it never pulls you away from wherever you were scrolling. The whole site keeps its scroll position underneath.">
+    <span class="entry-date">2026.06.18</span>
+    <span class="entry-title">The department is open</span>
+    <span class="entry-arrow">→</span>
+  </div>
+  <div class="entry" data-title="Chrome, without a photo studio" data-date="2026.05.30" data-body="No environment photo was harmed in the making of this reflection. The chrome look you see in the header is a handful of gradients and a fresnel term, evaluated per pixel.">
+    <span class="entry-date">2026.05.30</span>
+    <span class="entry-title">Chrome, without a photo studio</span>
+    <span class="entry-arrow">→</span>
+  </div>
+</section>
+
+<footer>
+  <span>ALWAYS ON* — learning demo, not the real PX PUSH site</span>
+  <span>© 2026</span>
+</footer>
+
+<div id="drawer-backdrop"></div>
+<div id="drawer">
+  <div class="close" id="drawer-close">CLOSE ✕</div>
+  <div class="drawer-date" id="drawer-date"></div>
+  <h3 id="drawer-title"></h3>
+  <p id="drawer-body"></p>
+</div>
+
+<script>
+/* ============================================================
+   1. マトリクス演算のミニユーティリティ
+   外部ライブラリ(gl-matrix等)を使わず、必要な計算だけを
+   自前で用意する。列優先(column-major)のFloat32Array(16要素)。
+   ============================================================ */
+function m4Identity(){
+  return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+}
+function m4Multiply(a,b){
+  const o = new Float32Array(16);
+  for(let c=0;c<4;c++){
+    for(let r=0;r<4;r++){
+      o[c*4+r] = a[0*4+r]*b[c*4+0] + a[1*4+r]*b[c*4+1] + a[2*4+r]*b[c*4+2] + a[3*4+r]*b[c*4+3];
+    }
+  }
+  return o;
+}
+function m4Translation(x,y,z){
+  const m = m4Identity(); m[12]=x; m[13]=y; m[14]=z; return m;
+}
+function m4Scaling(s){
+  const m = m4Identity(); m[0]=s; m[5]=s; m[10]=s; return m;
+}
+function m4RotationX(a){
+  const c=Math.cos(a), s=Math.sin(a); const m=m4Identity();
+  m[5]=c; m[6]=s; m[9]=-s; m[10]=c; return m;
+}
+function m4RotationY(a){
+  const c=Math.cos(a), s=Math.sin(a); const m=m4Identity();
+  m[0]=c; m[2]=-s; m[8]=s; m[10]=c; return m;
+}
+function m4Perspective(fovyRad, aspect, near, far){
+  const f = 1/Math.tan(fovyRad/2), nf = 1/(near-far);
+  const m = new Float32Array(16);
+  m[0]=f/aspect; m[5]=f; m[10]=(far+near)*nf; m[11]=-1; m[14]=2*far*near*nf;
+  return m;
+}
+function m4Translate3(m,v){ return [m[0]*v[0]+m[4]*v[1]+m[8]*v[2]+m[12], m[1]*v[0]+m[5]*v[1]+m[9]*v[2]+m[13], m[2]*v[0]+m[6]*v[1]+m[10]*v[2]+m[14]]; }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+function easeInOutCubic(t){ return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }
+
+/* ============================================================
+   2. ジオメトリ生成:「＋（プラス）」マークを厚み付きで押し出す
+   PX PUSH は SVGLoader でロゴSVGを ExtrudeGeometry に通して
+   ベベル(面取り)付きの3D立体にしている、と技術記事にあった。
+   ここでは同じ考え方を、外部ライブラリなしの手作りで再現する。
+   1. 12点からなる「＋」の輪郭を2Dで定義する
+   2. 表面(front)と裏面(back)にコピーしてZ方向にずらす → 厚みが出る
+   3. 表・裏をそれぞれ5つの矩形(=10枚の三角形)で塗りつぶす → キャップ
+   4. 輪郭の各辺ごとに、表と裏をつなぐ壁を1枚ずつ張る → 側面
+   5. 側面の法線は「隣り合う面の法線を平均」してなめらかにすることで、
+      本物のベベル(面取りジオメトリ)を作らずに、面取りされたような
+      柔らかいハイライトの回り込みを疑似的に再現する（軽量な近似）
+   ============================================================ */
+function buildPlusMarkGeometry(){
+  const L = 1.0;   // 腕の外側の長さ
+  const A = 0.36;  // 腕の半幅
+  const H = 0.30;  // 押し出しの半分の厚み
+
+  // 輪郭を12点、順番に並べる(隣り合う点が必ず1本の辺になる)
+  const outline = [
+    [-A,  L], [ A,  L], [ A,  A], [ L,  A], [ L, -A], [ A, -A],
+    [ A, -L], [-A, -L], [-A, -A], [-L, -A], [-L,  A], [-A,  A],
+  ];
+  const n = outline.length;
+
+  // 各辺の「外向き2D法線」を先に全部計算しておく(ベベル風の法線平均に使う)
+  const edgeNormals = [];
+  for(let i=0;i<n;i++){
+    const p0 = outline[i], p1 = outline[(i+1)%n];
+    const dx = p1[0]-p0[0], dy = p1[1]-p0[1];
+    const len = Math.hypot(dx,dy) || 1;
+    edgeNormals.push([ dy/len, -dx/len ]); // 時計回り前提で外向きになる向き
+  }
+
+  const positions = [];
+  const normals = [];
+  function pushTri(p0,p1,p2,nrm){
+    positions.push(...p0,...p1,...p2);
+    normals.push(...nrm,...nrm,...nrm);
+  }
+
+  // ---- 前面・背面のキャップ(5つの矩形 = 縦棒・横棒・中央) ----
+  const quads = [
+    [11,0,1,2],  // 上の腕
+    [2,3,4,5],   // 右の腕
+    [5,6,7,8],   // 下の腕
+    [8,9,10,11], // 左の腕
+    [2,5,8,11],  // 中央
+  ];
+  function capTriangles(z, normal){
+    for(const [ia,ib,ic,id] of quads){
+      const a=[...outline[ia],z], b=[...outline[ib],z], c=[...outline[ic],z], d=[...outline[id],z];
+      pushTri(a,b,c,normal);
+      pushTri(a,c,d,normal);
+    }
+  }
+  capTriangles( H, [0,0, 1]);
+  capTriangles(-H, [0,0,-1]);
+
+  // ---- 側面(壁) ----
+  // 各頂点の法線は「自分に隣接する2辺の法線の平均」にして、
+  // 面と面の継ぎ目がなめらかにハイライトを反射するようにする
+  function vertexNormal(i){
+    const prev = edgeNormals[(i-1+n)%n];
+    const cur  = edgeNormals[i];
+    const nx = prev[0]+cur[0], ny = prev[1]+cur[1];
+    const len = Math.hypot(nx,ny) || 1;
+    return [nx/len, ny/len, 0];
+  }
+  for(let i=0;i<n;i++){
+    const j=(i+1)%n;
+    const f0=[...outline[i], H],  f1=[...outline[j], H];
+    const b0=[...outline[i],-H],  b1=[...outline[j],-H];
+    const nA = vertexNormal(i), nB = vertexNormal(j);
+    // 台形を2枚の三角形に。頂点ごとに法線を変えて面取り風のグラデーションを出す
+    positions.push(...f0,...f1,...b1);  normals.push(...nA,...nB,...nB);
+    positions.push(...f0,...b1,...b0);  normals.push(...nA,...nB,...nA);
+  }
+
+  return { positions:new Float32Array(positions), normals:new Float32Array(normals), count: positions.length/3 };
+}
+
+/* ============================================================
+   3. WebGL初期化 & 描画ループ
+   ============================================================ */
+(function initChromeMark(){
+  const canvas = document.getElementById('gl-canvas');
+  const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  if(!gl){ canvas.style.display='none'; return; }
+
+  const vsSrc = `
+    attribute vec3 aPosition;
+    attribute vec3 aNormal;
+    uniform mat4 uModel;
+    uniform mat4 uView;
+    uniform mat4 uProj;
+    uniform mat4 uRot; // 回転のみを含む行列(法線の変換用)
+    varying vec3 vNormal;
+    varying vec3 vWorldPos;
+    void main(){
+      vec4 world = uModel * vec4(aPosition, 1.0);
+      vWorldPos = world.xyz;
+      vNormal = mat3(uRot) * aNormal;
+      gl_Position = uProj * uView * world;
+    }
+  `;
+  const fsSrc = `
+    precision mediump float;
+    varying vec3 vNormal;
+    varying vec3 vWorldPos;
+    uniform vec3 uCamPos;
+    uniform vec3 uLightDir;
+
+    /* 実際のHDRI環境マップの代わりに、スタジオ写真っぽい
+       グラデーションを数式だけで作る「フェイク環境マップ」。
+       上は明るい空、天井付近に細い照明バンド、下は暗い床。 */
+    vec3 envColor(vec3 dir){
+      // 上ほど明るい「空」のグラデーション
+      float up = dir.y*0.5 + 0.5;
+      vec3 sky = mix(vec3(0.14,0.14,0.16), vec3(0.96,0.97,0.99), pow(up,0.85));
+      // 天井の細い照明バンドを2本(写真スタジオのソフトボックスの映り込みを模す)
+      float band1 = 1.0 - smoothstep(0.0, 0.05, abs(dir.y - 0.55));
+      float band2 = 1.0 - smoothstep(0.0, 0.06, abs(dir.y + 0.20));
+      vec3 bands = vec3(1.7,1.65,1.6) * band1 + vec3(1.1,1.0,0.92) * band2;
+      // カメラの背後にも大きな光源がある想定で、正面向きの反射も明るくする
+      float front = smoothstep(-0.3, 1.0, dir.z) * 0.4;
+      // 横方向にほんのりアンバーのアクセント
+      float side = smoothstep(0.3, 1.0, abs(dir.x));
+      vec3 amber = vec3(0.5,0.28,0.06) * side * 0.5;
+      return sky + bands + amber + vec3(front);
+    }
+
+    void main(){
+      vec3 N = normalize(vNormal);
+      vec3 V = normalize(uCamPos - vWorldPos);
+      vec3 R = reflect(-V, N);
+      vec3 baseMetal = vec3(0.10,0.10,0.11);
+      vec3 refl = envColor(R);
+      float fresnel = pow(1.0 - max(dot(N,V), 0.0), 3.0);
+      vec3 color = mix(baseMetal*0.35 + refl*0.65, refl, clamp(fresnel*0.7 + 0.35, 0.0, 1.0));
+
+      vec3 L = normalize(uLightDir);
+      vec3 H = normalize(L + V);
+      float spec = pow(max(dot(N,H), 0.0), 70.0);
+      color += vec3(1.0,0.97,0.9) * spec * 1.3;
+
+      color = pow(color, vec3(0.85)); // 中間調を少し持ち上げてクロームらしい輝きに
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  function compile(type, src){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if(!gl.getShaderParameter(sh, gl.COMPILE_STATUS)){
+      console.error(gl.getShaderInfoLog(sh));
+    }
+    return sh;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  const geo = buildPlusMarkGeometry();
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, geo.positions, gl.STATIC_DRAW);
+  const aPosition = gl.getAttribLocation(prog, 'aPosition');
+  gl.enableVertexAttribArray(aPosition);
+  gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 0, 0);
+
+  const nrmBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, nrmBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, geo.normals, gl.STATIC_DRAW);
+  const aNormal = gl.getAttribLocation(prog, 'aNormal');
+  gl.enableVertexAttribArray(aNormal);
+  gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 0, 0);
+
+  const uModel = gl.getUniformLocation(prog, 'uModel');
+  const uView = gl.getUniformLocation(prog, 'uView');
+  const uProj = gl.getUniformLocation(prog, 'uProj');
+  const uRot = gl.getUniformLocation(prog, 'uRot');
+  const uCamPos = gl.getUniformLocation(prog, 'uCamPos');
+  const uLightDir = gl.getUniformLocation(prog, 'uLightDir');
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.disable(gl.CULL_FACE); // 手作業の三角形分割で巻き順が揃っていない箇所があっても破綻しないようにする
+
+  const camPos = [0,0,4.4];
+  const view = (function(){
+    // カメラはZ+側から原点を見下ろすだけなので、平行移動の逆行列で十分
+    return m4Translation(-camPos[0], -camPos[1], -camPos[2]);
+  })();
+
+  /* ---------- スクロール連動パラメータ ---------- */
+  let lastScrollY = window.scrollY;
+  let scrollVelocity = 0;   // スクロール速度(平滑化済み) → 回転の勢いに変換
+  let spin = 0;             // 現在の回転角(Y軸)
+  const DOCK_DISTANCE = () => Math.max(320, window.innerHeight * 0.85);
+
+  // ヒーロー中央での位置・大きさ ⇔ ヘッダー左上でドッキングした時の位置・大きさ
+  const HERO_POS = [0, 0.95, 0];
+  const HERO_SCALE = 0.95;
+  const DOCK_POS = [-3.55, 2.10, -1.35];
+  const DOCK_SCALE = 0.115;
+
+  function frame(){
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    const dpr = Math.min(window.devicePixelRatio||1, 2);
+    if(canvas.width !== Math.floor(w*dpr) || canvas.height !== Math.floor(h*dpr)){
+      canvas.width = Math.floor(w*dpr); canvas.height = Math.floor(h*dpr);
+      gl.viewport(0,0,canvas.width, canvas.height);
+    }
+
+    // スクロール速度を平滑化(なめらかに減衰させる一次ローパスフィルタ)
+    const sy = window.scrollY;
+    const delta = sy - lastScrollY;
+    lastScrollY = sy;
+    scrollVelocity = lerp(scrollVelocity, delta, 0.18);
+
+    // アイドル回転 + スクロール速度に比例した回転(速くスクロールするほど速く回る/逆スクロールで逆回転)
+    spin += 0.0035 + scrollVelocity * 0.02;
+
+    // ヒーロー→ヘッダーへのドッキング進捗(0→1)
+    const progress = easeInOutCubic(clamp01(sy / DOCK_DISTANCE()));
+
+    const pos = [
+      lerp(HERO_POS[0], DOCK_POS[0], progress),
+      lerp(HERO_POS[1], DOCK_POS[1], progress),
+      lerp(HERO_POS[2], DOCK_POS[2], progress),
+    ];
+    const scale = lerp(HERO_SCALE, DOCK_SCALE, progress);
+
+    const rot = m4Multiply(m4RotationY(spin), m4RotationX(0.28));
+    const model = m4Multiply(m4Translation(pos[0],pos[1],pos[2]), m4Multiply(rot, m4Scaling(scale)));
+    const proj = m4Perspective(45*Math.PI/180, w/h, 0.1, 30);
+
+    gl.clearColor(0,0,0,0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.uniformMatrix4fv(uModel, false, model);
+    gl.uniformMatrix4fv(uView, false, view);
+    gl.uniformMatrix4fv(uProj, false, proj);
+    gl.uniformMatrix4fv(uRot, false, rot);
+    gl.uniform3fv(uCamPos, camPos);
+    gl.uniform3fv(uLightDir, [0.5, 0.8, 0.6]);
+    gl.drawArrays(gl.TRIANGLES, 0, geo.count);
+
+    // ヘッダーDOMの状態をスクロール進捗に同期させる
+    const header = document.getElementById('site-header');
+    header.classList.toggle('docked', progress > 0.65);
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+/* ============================================================
+   4. トップへ戻るホームリンク(ドッキングしたロゴのクリック領域)
+   ============================================================ */
+(function(){
+  document.getElementById('home-hit').addEventListener('click', () => {
+    window.scrollTo({top:0, behavior:'smooth'});
+  });
+})();
+
+/* ============================================================
+   5. Journalドロワー(記事を別ページへ飛ばさずオーバーレイで開く)
+   ============================================================ */
+(function(){
+  const backdrop = document.getElementById('drawer-backdrop');
+  const drawer = document.getElementById('drawer');
+  const titleEl = document.getElementById('drawer-title');
+  const dateEl = document.getElementById('drawer-date');
+  const bodyEl = document.getElementById('drawer-body');
+
+  function open(entry){
+    titleEl.textContent = entry.dataset.title;
+    dateEl.textContent = entry.dataset.date;
+    bodyEl.textContent = entry.dataset.body;
+    backdrop.classList.add('open');
+    drawer.classList.add('open');
+  }
+  function close(){
+    backdrop.classList.remove('open');
+    drawer.classList.remove('open');
+  }
+  document.querySelectorAll('.entry').forEach(el => {
+    el.addEventListener('click', () => open(el));
+  });
+  backdrop.addEventListener('click', close);
+  document.getElementById('drawer-close').addEventListener('click', close);
+  window.addEventListener('keydown', e => { if(e.key === 'Escape') close(); });
+})();
+
+/* ============================================================
+   6. 粒子ノイズテクスチャ(CRT風オーバーレイの一部)
+   canvasに小さなランダムノイズを1回だけ描画し、CSSで敷き詰める。
+   ============================================================ */
+(function(){
+  const c = document.getElementById('noise-overlay');
+  const ctx = c.getContext('2d');
+  const size = 96;
+  c.width = size; c.height = size;
+  const img = ctx.createImageData(size, size);
+  for(let i=0;i<img.data.length;i+=4){
+    const v = Math.random()*255;
+    img.data[i]=v; img.data[i+1]=v; img.data[i+2]=v; img.data[i+3]=255;
+  }
+  ctx.putImageData(img,0,0);
+  c.style.width='100vw'; c.style.height='100vh';
+  c.style.imageRendering='pixelated';
+})();
+</script>
+</body>
+</html>
