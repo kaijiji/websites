@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebGL Scroll Dissolve Reveal — Vero New-York 再現デモ</title>
+<style>
+  :root{
+    --ink:#1b1712;
+    --paper:#f3ede2;
+    --gold:#b08d57;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0;
+    padding:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family: "Times New Roman", "Georgia", serif;
+    overflow-x:hidden;
+  }
+
+  /* ===== Hero: WebGL parallax + dissolve canvas ===== */
+  .hero{
+    position:relative;
+    height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+  }
+  .hero canvas{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+    display:block;
+  }
+  .hero-copy{
+    position:relative;
+    z-index:2;
+    text-align:center;
+    color:#fff;
+    mix-blend-mode: difference;
+    pointer-events:none;
+  }
+  .hero-copy .eyebrow{
+    display:block;
+    letter-spacing:.35em;
+    font-size:.7rem;
+    text-transform:uppercase;
+    margin-bottom:1rem;
+    opacity:.85;
+  }
+  .hero-copy h1{
+    font-weight:400;
+    font-size:clamp(2.4rem, 8vw, 6rem);
+    letter-spacing:.08em;
+    margin:0;
+  }
+  .hero-scroll-hint{
+    position:absolute;
+    bottom:2.2rem;
+    left:50%;
+    transform:translateX(-50%);
+    z-index:2;
+    font-size:.65rem;
+    letter-spacing:.3em;
+    text-transform:uppercase;
+    color:#fff;
+    mix-blend-mode: difference;
+    opacity:.7;
+  }
+
+  /* ===== Story / text-reveal section ===== */
+  .story{
+    max-width:780px;
+    margin:0 auto;
+    padding:22vh 1.5rem;
+  }
+  .story p{
+    font-size:clamp(1.4rem, 3vw, 2.1rem);
+    line-height:1.6;
+    font-weight:300;
+    margin:0 0 2.2rem 0;
+  }
+  /* each word is wrapped in a span by JS; this is the resting (hidden) state */
+  .reveal-word{
+    display:inline-block;
+    transform:translateY(1.1em);
+    opacity:0;
+    filter: blur(6px);
+    transition: transform .8s cubic-bezier(.19,1,.22,1), opacity .8s ease, filter .8s ease;
+  }
+  .reveal-word.is-visible{
+    transform:translateY(0);
+    opacity:1;
+    filter: blur(0);
+  }
+
+  /* ===== Footer ===== */
+  footer{
+    text-align:center;
+    padding:6rem 1.5rem 8rem;
+    font-size:.7rem;
+    letter-spacing:.25em;
+    text-transform:uppercase;
+    color:#7d7364;
+  }
+  .spacer{ height:20vh; }
+</style>
+</head>
+<body>
+
+<section class="hero" id="hero">
+  <canvas id="glcanvas"></canvas>
+  <div class="hero-copy">
+    <span class="eyebrow">A demonstration inspired by luxury WebGL portfolio sites</span>
+    <h1>TRANSFORMATION</h1>
+  </div>
+  <div class="hero-scroll-hint">Scroll ↓</div>
+</section>
+
+<div class="spacer"></div>
+
+<section class="story">
+  <p data-reveal>そこにあった記憶が、静かに、確かな形へと変わっていく。</p>
+  <p data-reveal>スクロールという操作を、光と手仕事の物語に変える。</p>
+</section>
+
+<div class="spacer"></div>
+
+<footer>
+  Reproduction demo for study purposes — see README.md for details
+</footer>
+
+<script>
+/* =========================================================================
+ * WebGL Scroll-Linked Dissolve + Parallax Reveal
+ * -------------------------------------------------------------------------
+ * このスクリプトが再現している「表現技法」:
+ *   1. フルスクリーンのWebGLキャンバスに2枚のテクスチャ(素材A/素材B)を
+ *      乗せ、スクロール量に応じてノイズベースの「ディゾルブ(溶暗)」で
+ *      滑らかに一方から他方へ切り替える。
+ *   2. マウス位置に応じてUVをわずかにずらし、視差(パララックス)による
+ *      奥行き感を出す。
+ *   3. 画像はどこからもダウンロードせず、Canvas2Dでその場生成した
+ *      オリジナルのシルエット画像をテクスチャとして使用している
+ *      (著作権のあるアセットを一切使わない)。
+ *
+ * 使い方:
+ *   1. HTML内に <canvas id="glcanvas"></canvas> を用意する。
+ *   2. createScrollDissolveWebGL(canvas, { getProgress, getPointer }) を呼ぶ。
+ *      - getProgress(): 0〜1 を返す関数。ヒーローセクションの
+ *        スクロール進捗など、好きなロジックに差し替え可能。
+ *      - getPointer(): {x, y} を -1〜1 の範囲で返す関数(マウス位置)。
+ *   3. 自分のプロジェクトでは makeTexture() の中身を、実際に持っている
+ *      2枚の画像(<img>やURL)に差し替えるだけでよい。
+ * ========================================================================= */
+
+function createScrollDissolveWebGL(canvas, { getProgress, getPointer }) {
+  const gl = canvas.getContext('webgl', { antialias: true, alpha: false })
+          || canvas.getContext('experimental-webgl');
+  if (!gl) {
+    console.warn('WebGL is not supported in this browser.');
+    return { destroy(){} };
+  }
+
+  // --- シェーダーソース -----------------------------------------------
+  const VERTEX_SRC = `
+    attribute vec2 aPosition;
+    varying vec2 vUv;
+    void main() {
+      vUv = aPosition * 0.5 + 0.5;
+      gl_Position = vec4(aPosition, 0.0, 1.0);
+    }
+  `;
+
+  const FRAGMENT_SRC = `
+    precision highp float;
+    varying vec2 vUv;
+
+    uniform sampler2D uTexA;
+    uniform sampler2D uTexB;
+    uniform float uProgress;   // 0..1 : スクロールで駆動するディゾルブ進行度
+    uniform vec2  uPointer;    // -1..1 : マウス位置(パララックス用)
+    uniform float uAspectFix;  // キャンバスとテクスチャの比率補正
+
+    // 安価な擬似乱数/ノイズ(外部ライブラリ不使用)
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    }
+    float noise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      float a = hash(i);
+      float b = hash(i + vec2(1.0, 0.0));
+      float c = hash(i + vec2(0.0, 1.0));
+      float d = hash(i + vec2(1.0, 1.0));
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+    }
+
+    void main() {
+      // --- マウス位置によるごくわずかな視差オフセット ---
+      vec2 parallax = uPointer * 0.02;
+
+      vec2 uvA = vUv + parallax * 0.6;
+      vec2 uvB = vUv + parallax;
+
+      vec3 colorA = texture2D(uTexA, uvA).rgb;
+      vec3 colorB = texture2D(uTexB, uvB).rgb;
+
+      // --- ノイズベースのディゾルブ閾値 ---
+      float n = noise(vUv * 6.0) * 0.5 + noise(vUv * 12.0) * 0.5;
+      float edge = 0.06; // 溶暗の境界の柔らかさ
+      float mixAmount = smoothstep(uProgress - edge, uProgress + edge, n);
+
+      vec3 color = mix(colorB, colorA, mixAmount);
+
+      // 切り替わりの境界にほのかな金色の発光ラインを乗せる(上質感の演出)
+      float band = 1.0 - abs(mixAmount - 0.5) * 2.0;
+      band = smoothstep(0.85, 1.0, band);
+      vec3 gold = vec3(0.69, 0.55, 0.34);
+      color += gold * band * 0.35;
+
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  function compileShader(type, src) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, src);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.error(gl.getShaderInfoLog(shader));
+    }
+    return shader;
+  }
+
+  const program = gl.createProgram();
+  gl.attachShader(program, compileShader(gl.VERTEX_SHADER, VERTEX_SRC));
+  gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, FRAGMENT_SRC));
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  // フルスクリーンの三角形2枚(quad)
+  const positionBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1, -1,  1, -1,  -1, 1,
+    -1,  1,  1, -1,   1, 1,
+  ]), gl.STATIC_DRAW);
+
+  const aPosition = gl.getAttribLocation(program, 'aPosition');
+  gl.enableVertexAttribArray(aPosition);
+  gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+
+  const uniforms = {
+    uTexA: gl.getUniformLocation(program, 'uTexA'),
+    uTexB: gl.getUniformLocation(program, 'uTexB'),
+    uProgress: gl.getUniformLocation(program, 'uProgress'),
+    uPointer: gl.getUniformLocation(program, 'uPointer'),
+  };
+
+  // --- テクスチャ生成 ----------------------------------------------------
+  // ここでは実在サイトの画像は一切使わず、Canvas2Dでその場生成した
+  // オリジナルのシルエットイラストをテクスチャ化している。
+  // 自分のプロジェクトで使う場合は、この関数を「画像を読み込んでテクスチャ化する」
+  // 処理に差し替えるだけでよい(下の使用例コメントを参照)。
+  function makeTexture(draw) {
+    const size = 512;
+    const off = document.createElement('canvas');
+    off.width = size;
+    off.height = size;
+    const ctx = off.getContext('2d');
+    draw(ctx, size);
+
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, off);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    return tex;
+  }
+
+  // 素材A: しなやかな布(ドレス)を思わせる、流れるカーブのオリジナル・イラスト
+  const textureA = makeTexture((ctx, size) => {
+    const g = ctx.createLinearGradient(0, 0, size, size);
+    g.addColorStop(0, '#efe6d6');
+    g.addColorStop(1, '#c9b98f');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+
+    ctx.strokeStyle = 'rgba(120,100,70,0.35)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 10; i++) {
+      ctx.beginPath();
+      const x0 = size * 0.5 + Math.sin(i) * 40;
+      ctx.moveTo(x0, 0);
+      ctx.bezierCurveTo(
+        x0 - 120 + i * 8, size * 0.35,
+        x0 + 140 - i * 6, size * 0.65,
+        size * 0.5 + Math.cos(i) * 60, size
+      );
+      ctx.stroke();
+    }
+  });
+
+  // 素材B: 彫刻のような、丸みを帯びたフォルムのオリジナル・イラスト
+  const textureB = makeTexture((ctx, size) => {
+    const g = ctx.createRadialGradient(size*0.5, size*0.4, 20, size*0.5, size*0.5, size*0.7);
+    g.addColorStop(0, '#5b4a35');
+    g.addColorStop(1, '#241d15');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+
+    ctx.fillStyle = 'rgba(200,170,110,0.9)';
+    ctx.beginPath();
+    ctx.ellipse(size*0.5, size*0.52, size*0.16, size*0.30, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(20,16,12,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(size*0.5, size*0.9, size*0.22, size*0.05, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, textureA);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, textureB);
+  gl.uniform1i(uniforms.uTexA, 0);
+  gl.uniform1i(uniforms.uTexB, 1);
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // 現在値をなめらかに目標値へ近づける(lerp)ための状態
+  let currentProgress = 0;
+  let currentPointer = { x: 0, y: 0 };
+  let rafId = null;
+
+  function frame() {
+    const targetProgress = getProgress();
+    const targetPointer = getPointer();
+
+    // lerpで急激な変化を滑らかにする(慣性のあるスクロール演出の基本形)
+    currentProgress += (targetProgress - currentProgress) * 0.08;
+    currentPointer.x += (targetPointer.x - currentPointer.x) * 0.06;
+    currentPointer.y += (targetPointer.y - currentPointer.y) * 0.06;
+
+    gl.uniform1f(uniforms.uProgress, currentProgress);
+    gl.uniform2f(uniforms.uPointer, currentPointer.x, currentPointer.y);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    rafId = requestAnimationFrame(frame);
+  }
+  frame();
+
+  return {
+    destroy() {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', resize);
+    }
+  };
+}
+
+/* =========================================================================
+ * ここから下は、上の関数を実際のページで使うためのセットアップコード。
+ * ========================================================================= */
+
+(function setupHero() {
+  const canvas = document.getElementById('glcanvas');
+  const hero = document.getElementById('hero');
+
+  let pointer = { x: 0, y: 0 };
+  window.addEventListener('pointermove', (e) => {
+    pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
+    pointer.y = (e.clientY / window.innerHeight) * 2 - 1;
+  });
+
+  function getProgress() {
+    // ヒーローセクションが画面上をどれだけ通過したかを 0..1 で返す
+    const rect = hero.getBoundingClientRect();
+    const total = rect.height + window.innerHeight;
+    const scrolled = window.innerHeight - rect.top;
+    return Math.min(1, Math.max(0, scrolled / total));
+  }
+
+  function getPointer() {
+    return pointer;
+  }
+
+  createScrollDissolveWebGL(canvas, { getProgress, getPointer });
+})();
+
+/* =========================================================================
+ * テキストの行内ワード単位リベール
+ * (SplitText + ScrollTrigger のような効果を、外部ライブラリなしで再現)
+ * ========================================================================= */
+(function setupTextReveal() {
+  const paragraphs = document.querySelectorAll('[data-reveal]');
+
+  paragraphs.forEach((p) => {
+    const words = p.textContent.trim().split(/\s+|(?<=[、。])/).filter(Boolean);
+    p.innerHTML = words
+      .map((w) => `<span class="reveal-word">${w}</span>`)
+      .join('');
+  });
+
+  const spans = document.querySelectorAll('.reveal-word');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        const span = entry.target;
+        const siblings = Array.from(span.parentElement.children);
+        const index = siblings.indexOf(span);
+        span.style.transitionDelay = `${index * 35}ms`;
+        span.classList.add('is-visible');
+        observer.unobserve(span);
+      }
+    });
+  }, { threshold: 0.4 });
+
+  spans.forEach((s) => observer.observe(s));
+})();
+</script>
+</body>
+</html>
