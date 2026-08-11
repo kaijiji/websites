@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cuberto風 表現技法デモ — Gooeyカーソル / マグネティックボタン / グレイン</title>
+<style>
+  :root{
+    --bg: #0d0d10;
+    --fg: #f3f1ea;
+    --accent-a: #ff5b6a;
+    --accent-b: #7c5cff;
+    --accent-c: #ffb84d;
+    --accent-d: #4ddbff;
+  }
+
+  *{ box-sizing: border-box; }
+
+  html, body{
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Segoe UI", Roboto, sans-serif;
+    overflow-x: hidden;
+  }
+
+  /* カスタムカーソルを使う間はブラウザ標準カーソルを消す(タッチ端末は後述JSで復活させる) */
+  body.has-custom-cursor, body.has-custom-cursor a, body.has-custom-cursor button{
+    cursor: none;
+  }
+
+  section{
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 6vw;
+    text-align: center;
+    isolation: isolate; /* blend-modeがページ全体に漏れないようにする */
+  }
+
+  h1{
+    font-size: clamp(2.4rem, 7vw, 6rem);
+    line-height: 1.02;
+    margin: 0 0 1.2rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  p.lead{
+    max-width: 42em;
+    font-size: clamp(1rem, 1.6vw, 1.25rem);
+    opacity: 0.75;
+    margin: 0 0 2.4rem;
+  }
+
+  .badge{
+    display: inline-block;
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    opacity: 0.55;
+    margin-bottom: 1.2rem;
+  }
+
+  /* ---------- マグネティックボタン ---------- */
+  .magnetic-btn{
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.1em 2.4em;
+    border-radius: 999px;
+    background: var(--fg);
+    color: var(--bg);
+    font-weight: 700;
+    font-size: 1rem;
+    border: none;
+    text-decoration: none;
+    will-change: transform;
+    transition: background 0.25s ease;
+  }
+  .magnetic-btn:hover{ background: var(--accent-c); }
+  .magnetic-btn .btn-inner{
+    display: inline-block;
+    will-change: transform;
+  }
+
+  /* ---------- カード(gooやカーソルラベル切り替えの実験対象) ---------- */
+  .card-grid{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1.4rem;
+    width: min(1000px, 100%);
+    margin-top: 3rem;
+  }
+  .card{
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px;
+    padding: 2.4rem 1.6rem;
+    font-weight: 600;
+    backdrop-filter: blur(6px);
+  }
+
+  /* ---------- ノイズ(グレイン)オーバーレイ ---------- */
+  #grain-canvas{
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 40;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+  }
+
+  /* ---------- Gooey背景ブロブ ---------- */
+  #blob-field{
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    z-index: 0;
+    filter: url(#goo-filter);
+  }
+  .blob{
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(2px);
+    mix-blend-mode: screen;
+    opacity: 0.45;
+  }
+
+  /* #blob-field は position:absolute のまま扱いたいのでここでは除外する */
+  section#hero > *:not(#blob-field){ position: relative; z-index: 1; }
+
+  /* ---------- カスタムカーソル本体 ---------- */
+  #cursor-root{
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    z-index: 999;
+    filter: url(#goo-filter);
+  }
+  .cursor-dot,
+  .cursor-ring{
+    position: absolute;
+    top: 0;
+    left: 0;
+    border-radius: 50%;
+    background: var(--fg);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  .cursor-dot{ width: 10px; height: 10px; }
+  .cursor-ring{
+    width: 10px;
+    height: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* gooフィルターの外側にラベルを置く(フィルターでラベルの文字までぼやけるのを防ぐ) */
+  #cursor-label{
+    position: fixed;
+    top: 0;
+    left: 0;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 1000;
+    color: var(--bg);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    white-space: nowrap;
+  }
+
+  footer{
+    text-align: center;
+    padding: 4rem 1rem 6rem;
+    opacity: 0.5;
+    font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+
+  <!-- SVGフィルター定義。goo(メタボール)効果とグレインノイズ生成の元。画面には表示されない -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <filter id="goo-filter" x="-50%" y="-50%" width="200%" height="200%">
+        <!-- ぼかして輪郭を溶かす -->
+        <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur" />
+        <!-- コントラストを急激に上げて輪郭を再びくっきりさせる。
+             ぼけて重なった部分だけがそのまま繋がって見える = "gooey"(メタボール)効果。
+             これがそのまま最終出力(色は blur の値をそのまま引き継ぐ) -->
+        <feColorMatrix in="blur" mode="matrix"
+          values="1 0 0 0 0
+                  0 1 0 0 0
+                  0 0 1 0 0
+                  0 0 0 18 -7" />
+      </filter>
+    </defs>
+  </svg>
+
+  <canvas id="grain-canvas"></canvas>
+
+  <section id="hero">
+    <div id="blob-field">
+      <div class="blob" style="width:38vw;height:38vw;background:var(--accent-b);left:5%;top:10%;"></div>
+      <div class="blob" style="width:30vw;height:30vw;background:var(--accent-a);right:8%;top:20%;"></div>
+      <div class="blob" style="width:26vw;height:26vw;background:var(--accent-d);left:30%;bottom:5%;"></div>
+      <div class="blob" style="width:22vw;height:22vw;background:var(--accent-c);right:20%;bottom:0%;"></div>
+    </div>
+
+    <span class="badge">Reference: cuberto.com — Awwwards Site of the Day</span>
+    <h1>Gooey Cursor<br>& Magnetic UI</h1>
+    <p class="lead">
+      これは Cuberto (cuberto.com) の観察に基づき、著者オリジナルで書き起こした
+      「表現技法の再現デモ」です。実際のサイトのコードは一切使用していません。
+      カードや下のボタンにマウスを乗せてカーソルの変化とマグネティック効果を確認してください。
+    </p>
+    <a href="#cards" class="magnetic-btn" data-magnetic data-cursor-text="Scroll">
+      <span class="btn-inner">試してみる</span>
+    </a>
+
+    <div class="card-grid" id="cards">
+      <div class="card" data-cursor-text="View">Case 01<br>Magnetic + Label</div>
+      <div class="card" data-cursor-text="Drag">Case 02<br>Gooey Merge</div>
+      <div class="card" data-cursor-text="Open">Case 03<br>Grain Overlay</div>
+    </div>
+  </section>
+
+  <footer>
+    学習用オリジナル再現デモ / 詳しい仕組みは同フォルダの README.md を参照してください。
+  </footer>
+
+<script>
+(() => {
+  "use strict";
+
+  const isTouch = window.matchMedia("(pointer: coarse)").matches;
+
+  /* ============================================================
+   * 1. CustomCursor
+   *    マウス座標を lerp(線形補間) で追いかける「遅延カーソル」。
+   *    data-cursor-text を持つ要素にホバーすると円が拡大し、
+   *    ラベルが浮かび上がる。SVGのgoo-filterを cursor-dot と
+   *    cursor-ring の親要素にかけることで、2つの円が近づいた時に
+   *    メタボールのように融合して見える。
+   *
+   *    使い方:
+   *      new CustomCursor({ hoverSelector: '[data-cursor-text]' });
+   *    ホバー時に出したい文言は data-cursor-text="View" のように指定する。
+   * ============================================================ */
+  class CustomCursor {
+    constructor({ hoverSelector = "[data-cursor-text]" } = {}) {
+      if (isTouch) return; // タッチ端末では標準カーソルのまま何もしない
+
+      document.body.classList.add("has-custom-cursor");
+
+      this.root = document.createElement("div");
+      this.root.id = "cursor-root";
+      this.dot = document.createElement("div");
+      this.dot.className = "cursor-dot";
+      this.ring = document.createElement("div");
+      this.ring.className = "cursor-ring";
+      this.root.append(this.dot, this.ring);
+      document.body.appendChild(this.root);
+
+      this.label = document.createElement("div");
+      this.label.id = "cursor-label";
+      document.body.appendChild(this.label);
+
+      // 実際のマウス位置(即時) / 描画に使う位置(lerpで遅延追従)
+      this.mouse = { x: innerWidth / 2, y: innerHeight / 2 };
+      this.dotPos = { ...this.mouse };
+      this.ringPos = { ...this.mouse };
+
+      this.hoverSelector = hoverSelector;
+      this.isHovering = false;
+
+      addEventListener("mousemove", (e) => {
+        this.mouse.x = e.clientX;
+        this.mouse.y = e.clientY;
+      });
+
+      document.addEventListener("mouseover", (e) => {
+        const target = e.target.closest(this.hoverSelector);
+        if (!target) return;
+        this.isHovering = true;
+        this.label.textContent = target.dataset.cursorText || "";
+        this.label.style.opacity = 1;
+      });
+      document.addEventListener("mouseout", (e) => {
+        const target = e.target.closest(this.hoverSelector);
+        if (!target) return;
+        this.isHovering = false;
+        this.label.style.opacity = 0;
+      });
+
+      this._raf();
+    }
+
+    _raf = () => {
+      const EASE_DOT = 0.35;  // 内側の点は追従を速く
+      const EASE_RING = 0.15; // 外側のリングはゆっくり(遅延=重さの演出)
+
+      this.dotPos.x += (this.mouse.x - this.dotPos.x) * EASE_DOT;
+      this.dotPos.y += (this.mouse.y - this.dotPos.y) * EASE_DOT;
+      this.ringPos.x += (this.mouse.x - this.ringPos.x) * EASE_RING;
+      this.ringPos.y += (this.mouse.y - this.ringPos.y) * EASE_RING;
+
+      this.dot.style.transform =
+        `translate(${this.dotPos.x}px, ${this.dotPos.y}px) translate(-50%,-50%)`;
+
+      const scale = this.isHovering ? 3.4 : 1;
+      this.ring.style.transform =
+        `translate(${this.ringPos.x}px, ${this.ringPos.y}px) translate(-50%,-50%) scale(${scale})`;
+
+      this.label.style.left = `${this.ringPos.x}px`;
+      this.label.style.top = `${this.ringPos.y}px`;
+
+      requestAnimationFrame(this._raf);
+    };
+  }
+
+  /* ============================================================
+   * 2. MagneticButton
+   *    要素の中心から一定距離(radius)内にマウスが入ると、
+   *    中心からマウスへの距離 × strength だけ要素を引き寄せる。
+   *    離れたら transform を 0 に戻すことでバネのように戻る。
+   *
+   *    使い方: 対象要素に data-magnetic を付けるだけ。
+   *      <button data-magnetic>Hello</button>
+   *    内側に .btn-inner があればテキストだけ少し多めに動かして
+   *    奥行き感を出す(無くても動作する)。
+   * ============================================================ */
+  class MagneticButton {
+    constructor(el, { radius = 90, strength = 0.4 } = {}) {
+      this.el = el;
+      this.inner = el.querySelector(".btn-inner") || el;
+      this.radius = radius;
+      this.strength = strength;
+
+      el.addEventListener("mousemove", (e) => this._onMove(e));
+      el.addEventListener("mouseleave", () => this._reset());
+    }
+
+    _onMove(e) {
+      const rect = this.el.getBoundingClientRect();
+      const relX = e.clientX - (rect.left + rect.width / 2);
+      const relY = e.clientY - (rect.top + rect.height / 2);
+
+      this.el.style.transform =
+        `translate(${relX * this.strength}px, ${relY * this.strength}px)`;
+      this.inner.style.transform =
+        `translate(${relX * this.strength * 0.6}px, ${relY * this.strength * 0.6}px)`;
+    }
+
+    _reset() {
+      this.el.style.transform = "translate(0,0)";
+      this.inner.style.transform = "translate(0,0)";
+    }
+  }
+
+  /* ============================================================
+   * 3. GrainOverlay
+   *    小さいオフスクリーンcanvasに毎フレームランダムなグレースケール
+   *    ノイズを描き、それを画面いっぱいのcanvasへ拡大して貼り付ける。
+   *    毎フレーム作り直すのは重いので、数フレームに1回だけ更新する。
+   *    mix-blend-mode: overlay と低いopacityで「フィルム粒子」のような
+   *    質感になる。
+   * ============================================================ */
+  class GrainOverlay {
+    constructor(canvas, { tileSize = 96, updateEvery = 2 } = {}) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext("2d");
+      this.tileSize = tileSize;
+      this.updateEvery = updateEvery;
+      this.frame = 0;
+
+      this.tile = document.createElement("canvas");
+      this.tile.width = tileSize;
+      this.tile.height = tileSize;
+      this.tileCtx = this.tile.getContext("2d");
+
+      this._resize();
+      addEventListener("resize", () => this._resize());
+      this._raf();
+    }
+
+    _resize() {
+      this.canvas.width = innerWidth;
+      this.canvas.height = innerHeight;
+    }
+
+    _drawNoiseTile() {
+      const { tileSize } = this;
+      const imageData = this.tileCtx.createImageData(tileSize, tileSize);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const v = Math.random() * 255;
+        data[i] = data[i + 1] = data[i + 2] = v;
+        data[i + 3] = 255;
+      }
+      this.tileCtx.putImageData(imageData, 0, 0);
+    }
+
+    _raf = () => {
+      if (this.frame % this.updateEvery === 0) {
+        this._drawNoiseTile();
+        const pattern = this.ctx.createPattern(this.tile, "repeat");
+        this.ctx.fillStyle = pattern;
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      }
+      this.frame++;
+      requestAnimationFrame(this._raf);
+    };
+  }
+
+  /* ============================================================
+   * 4. Floating blobs
+   *    CSSキーフレームだけで背景の色ブロブをゆらゆら漂わせる。
+   *    #blob-field 全体に goo-filter がかかっているため、
+   *    ブロブ同士が近づくと融合して見える。
+   * ============================================================ */
+  function animateBlobs() {
+    document.querySelectorAll(".blob").forEach((blob, i) => {
+      const duration = 14000 + i * 3000;
+      const amplitude = 60 + i * 20;
+      const start = performance.now() - i * 1500;
+
+      function tick(now) {
+        const t = ((now - start) % duration) / duration;
+        const angle = t * Math.PI * 2;
+        blob.style.translate =
+          `${Math.cos(angle) * amplitude}px ${Math.sin(angle * 1.3) * amplitude}px`;
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+  }
+
+  // ---- 初期化 ----
+  new CustomCursor({ hoverSelector: "[data-cursor-text]" });
+  document.querySelectorAll("[data-magnetic]").forEach((el) => new MagneticButton(el));
+  new GrainOverlay(document.getElementById("grain-canvas"));
+  animateBlobs();
+})();
+</script>
+</body>
+</html>
