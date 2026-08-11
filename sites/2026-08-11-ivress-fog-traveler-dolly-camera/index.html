@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>拒光の地 — 再現デモ（IVRESS 風 霧の3Dランドスケープ × スクロールドリーカメラ）</title>
+<style>
+  /* ============================================================
+     このファイルは学習用のオリジナル再現デモです。
+     IVRESS ブランドサイト（制作: Utsubo, https://brand.ivress.co.jp）の
+     実際のソースコード・3Dモデル・テクスチャ・コピーライティングは
+     一切使用していません。「霧に包まれた薄暗い3Dランドスケープの中に
+     小さな旅人が立ち、スクロールでカメラが奥へドリーしながら
+     章立てで物語が進む」という、同サイトで観察できる表現ジャンルを
+     理解した上で、地形・人物シルエット・光源・文章すべてゼロから
+     独自に作成しています。
+     ============================================================ */
+
+  :root{
+    --fg:#eef0f2;
+    --dim:#9aa0ac;
+    --accent:#e7b978;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0;
+    background:#020203;
+    color:var(--fg);
+    font-family:"Hiragino Mincho ProN","Noto Serif JP","Yu Mincho",serif;
+    overflow-x:hidden;
+  }
+
+  /* 実コンテンツは position:fixed の HUD レイヤーだけで描き、
+     スクロール量(進捗)だけをこの高さから取得する */
+  #scroll-spacer{ height:480vh; }
+
+  canvas#gl{
+    position:fixed; inset:0;
+    width:100%; height:100%;
+    display:block;
+  }
+
+  #vignette{
+    position:fixed; inset:0;
+    z-index:2; pointer-events:none;
+    background:radial-gradient(ellipse at 50% 55%, transparent 35%, rgba(0,0,0,.55) 100%);
+  }
+  #grain{
+    position:fixed; inset:0;
+    z-index:3; pointer-events:none;
+    opacity:.05;
+    mix-blend-mode:overlay;
+  }
+
+  #hud{
+    position:fixed; inset:0;
+    z-index:4; pointer-events:none;
+  }
+
+  header.top{
+    position:fixed; top:0; left:0; right:0;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding:clamp(20px,4vw,44px);
+    z-index:6;
+  }
+  .wordmark{
+    font-size:13px; letter-spacing:.32em;
+    text-transform:uppercase;
+    color:var(--fg);
+    opacity:.85;
+  }
+  .wordmark small{
+    display:block;
+    margin-top:6px;
+    font-size:10px;
+    letter-spacing:.18em;
+    color:var(--dim);
+    font-family:"Hiragino Sans","Noto Sans JP",sans-serif;
+  }
+  .scroll-hint{
+    font-family:"Hiragino Sans","Noto Sans JP",sans-serif;
+    font-size:11px; letter-spacing:.14em;
+    color:var(--dim);
+    writing-mode:vertical-rl;
+    opacity:.8;
+  }
+  .scroll-hint::after{
+    content:"";
+    display:block;
+    width:1px; height:46px;
+    margin:10px auto 0;
+    background:linear-gradient(var(--dim), transparent);
+  }
+
+  /* 章立てテキスト。縦書きで画面左右どちらかに浮かぶ */
+  .chapter{
+    position:fixed;
+    top:0; bottom:0;
+    display:flex;
+    align-items:center;
+    padding:0 clamp(16px,6vw,80px);
+    writing-mode:vertical-rl;
+    text-orientation:mixed;
+    opacity:0;
+    transition:opacity .9s ease, transform 1s ease;
+    z-index:5;
+  }
+  .chapter.right{ right:0; transform:translateX(24px); }
+  .chapter.left{  left:0;  transform:translateX(-24px); }
+  .chapter.is-visible{ opacity:1; transform:translateX(0); }
+
+  .chapter .num{
+    font-family:"Hiragino Sans","Noto Sans JP",sans-serif;
+    font-size:11px;
+    color:var(--accent);
+    letter-spacing:.3em;
+    margin-left:26px;
+  }
+  .chapter p{
+    margin:0;
+    font-size:clamp(18px,2.6vw,26px);
+    line-height:2.05;
+    letter-spacing:.08em;
+    max-height:70vh;
+  }
+  .chapter .en{
+    font-family:"Hiragino Sans","Noto Sans JP",sans-serif;
+    font-size:10px;
+    letter-spacing:.2em;
+    color:var(--dim);
+    margin-left:18px;
+  }
+
+  /* 右端の進捗レール(縦書き文化に合わせて縦のバー) */
+  .rail{
+    position:fixed;
+    left:clamp(16px,4vw,40px);
+    bottom:56px;
+    width:2px; height:140px;
+    background:rgba(238,240,242,.14);
+    z-index:6;
+  }
+  .rail i{
+    position:absolute; left:-2px; top:0;
+    width:6px; height:0%;
+    background:var(--accent);
+    box-shadow:0 0 10px rgba(231,185,120,.7);
+  }
+  .rail .label{
+    position:absolute; left:14px; top:0;
+    font-family:"Hiragino Sans","Noto Sans JP",sans-serif;
+    font-size:10px; letter-spacing:.14em;
+    color:var(--dim);
+    white-space:nowrap;
+  }
+
+  footer.credit{
+    position:fixed; left:0; right:0; bottom:14px;
+    text-align:center;
+    font-family:"Hiragino Sans","Noto Sans JP",sans-serif;
+    font-size:9px; letter-spacing:.08em;
+    color:rgba(154,160,172,.55);
+    z-index:6;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+<div id="vignette"></div>
+<canvas id="grain"></canvas>
+<div id="scroll-spacer"></div>
+
+<div id="hud">
+  <header class="top">
+    <div class="wordmark">拒光の地<small>A LAND THAT REFUSES LIGHT</small></div>
+    <div class="scroll-hint">SCROLL</div>
+  </header>
+
+  <section class="chapter right" data-range="0,0.18">
+    <span class="num">壱</span>
+    <p>灯りの乏しい土地に、<br>ひとつの足あとが伸びている。</p>
+    <span class="en">a trail begins</span>
+  </section>
+
+  <section class="chapter left" data-range="0.22,0.42">
+    <span class="num">弐</span>
+    <p>霧は、記憶を隠すためではなく、<br>迷わせないためにある。</p>
+    <span class="en">the fog keeps the way</span>
+  </section>
+
+  <section class="chapter right" data-range="0.48,0.68">
+    <span class="num">参</span>
+    <p>小さな光は、遠くにあるほど、<br>確かな道しるべになる。</p>
+    <span class="en">a small light, far ahead</span>
+  </section>
+
+  <section class="chapter left" data-range="0.74,1.0">
+    <span class="num">四</span>
+    <p>歩みを止めない者だけが、<br>その光の色を知る。</p>
+    <span class="en">only the walking know its color</span>
+  </section>
+
+  <div class="rail"><i id="railFill"></i><span class="label" id="railLabel">壱 / 四</span></div>
+  <footer class="credit">Original demo inspired by the genre of IVRESS (by Utsubo) — not affiliated, no source code reused</footer>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   1. 行列演算 & カメラ基底ベクトルの小さなユーティリティ
+      (外部3Dライブラリは使わず、必要最小限だけ自前実装)
+   ============================================================ */
+const V3 = {
+  sub:(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],
+  add:(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],
+  scale:(a,s)=>[a[0]*s,a[1]*s,a[2]*s],
+  cross:(a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]],
+  norm:(a)=>{ const l=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/l,a[1]/l,a[2]/l]; },
+  dot:(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],
+  lerp:(a,b,t)=>[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t],
+};
+
+function cameraBasis(eye, center, up){
+  const z = V3.norm(V3.sub(eye, center));      // back
+  const x = V3.norm(V3.cross(up, z));           // right
+  const y = V3.cross(z, x);                     // up
+  return { x, y, z };
+}
+
+const mat4 = {
+  perspective(fovy, aspect, near, far){
+    const f = 1/Math.tan(fovy/2), nf = 1/(near-far);
+    const o = new Float32Array(16);
+    o[0]=f/aspect; o[5]=f; o[10]=(far+near)*nf; o[11]=-1; o[14]=2*far*near*nf;
+    return o;
+  },
+  lookAt(eye, center, up){
+    const {x,y,z} = cameraBasis(eye, center, up);
+    return new Float32Array([
+      x[0], y[0], z[0], 0,
+      x[1], y[1], z[1], 0,
+      x[2], y[2], z[2], 0,
+      -V3.dot(x,eye), -V3.dot(y,eye), -V3.dot(z,eye), 1
+    ]);
+  },
+  translation(t){
+    return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, t[0],t[1],t[2],1]);
+  },
+  identity(){
+    return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+  }
+};
+
+/* ============================================================
+   2. ノイズ(値ノイズ + FBM) — 地形の起伏と塵の揺らぎに使用
+   ============================================================ */
+function hash2(x,y){
+  const s = Math.sin(x*127.1 + y*311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+function valueNoise2(x,y){
+  const xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
+  const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
+  const a=hash2(xi,yi), b=hash2(xi+1,yi), c=hash2(xi,yi+1), d=hash2(xi+1,yi+1);
+  const l=(a,b,t)=>a+(b-a)*t;
+  return l(l(a,b,u), l(c,d,u), v);
+}
+function fbm2(x,y){
+  let sum=0, amp=0.5, freq=1;
+  for(let i=0;i<5;i++){ sum += valueNoise2(x*freq,y*freq)*amp; freq*=2.03; amp*=0.55; }
+  return sum;
+}
+
+/* ============================================================
+   3. 地形メッシュの生成(グリッドを起伏させ、面法線を頂点へ加算平均)
+   ============================================================ */
+function createTerrain(sizeX, sizeZ, segX, segZ, originZ){
+  const positions=[], normals=[], indices=[];
+  const heights = [];
+  for(let j=0;j<=segZ;j++){
+    heights.push([]);
+    for(let i=0;i<=segX;i++){
+      const x = (i/segX - 0.5) * sizeX;
+      const z = originZ - (j/segZ) * sizeZ;
+      const h = fbm2(x*0.05, z*0.05) * 3.2 - fbm2(x*0.015,z*0.015)*2.0;
+      heights[j].push(h);
+      positions.push(x, h, z);
+    }
+  }
+  const idxAt = (i,j)=> j*(segX+1)+i;
+  for(let j=0;j<segZ;j++){
+    for(let i=0;i<segX;i++){
+      const a=idxAt(i,j), b=idxAt(i+1,j), c=idxAt(i,j+1), d=idxAt(i+1,j+1);
+      indices.push(a,c,b, b,c,d);
+    }
+  }
+  const normAcc = new Float32Array(positions.length);
+  for(let t=0;t<indices.length;t+=3){
+    const ia=indices[t]*3, ib=indices[t+1]*3, ic=indices[t+2]*3;
+    const ax=positions[ia],ay=positions[ia+1],az=positions[ia+2];
+    const bx=positions[ib],by=positions[ib+1],bz=positions[ib+2];
+    const cx=positions[ic],cy=positions[ic+1],cz=positions[ic+2];
+    const e1=[bx-ax,by-ay,bz-az], e2=[cx-ax,cy-ay,cz-az];
+    const n = V3.cross(e1,e2);
+    for(const off of [ia,ib,ic]){ normAcc[off]+=n[0]; normAcc[off+1]+=n[1]; normAcc[off+2]+=n[2]; }
+  }
+  for(let i=0;i<normAcc.length;i+=3){
+    const n = V3.norm([normAcc[i],normAcc[i+1],normAcc[i+2]]);
+    normals.push(n[0],n[1],n[2]);
+  }
+  return {
+    positions:new Float32Array(positions),
+    normals:new Float32Array(normals),
+    indices:new Uint16Array(indices)
+  };
+}
+
+/* ============================================================
+   4. 旅人シルエットのメッシュ(直方体を積み木のように組み合わせる)
+      各ボックスはフラットシェーディング用に24頂点/6面で独立生成
+   ============================================================ */
+function addBox(b, cx,cy,cz, sx,sy,sz){
+  const hx=sx/2, hy=sy/2, hz=sz/2;
+  const faces = [
+    { n:[0,0,1],  v:[[-hx,-hy,hz],[hx,-hy,hz],[hx,hy,hz],[-hx,hy,hz]] },
+    { n:[0,0,-1], v:[[hx,-hy,-hz],[-hx,-hy,-hz],[-hx,hy,-hz],[hx,hy,-hz]] },
+    { n:[1,0,0],  v:[[hx,-hy,hz],[hx,-hy,-hz],[hx,hy,-hz],[hx,hy,hz]] },
+    { n:[-1,0,0], v:[[-hx,-hy,-hz],[-hx,-hy,hz],[-hx,hy,hz],[-hx,hy,-hz]] },
+    { n:[0,1,0],  v:[[-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz],[-hx,hy,-hz]] },
+    { n:[0,-1,0], v:[[-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz],[-hx,-hy,hz]] },
+  ];
+  for(const f of faces){
+    const base = b.positions.length/3;
+    for(const v of f.v){
+      b.positions.push(v[0]+cx, v[1]+cy, v[2]+cz);
+      b.normals.push(f.n[0], f.n[1], f.n[2]);
+    }
+    b.indices.push(base,base+1,base+2, base,base+2,base+3);
+  }
+}
+function createTraveler(){
+  const b = { positions:[], normals:[], indices:[] };
+  addBox(b, -0.12, 0.42, 0,  0.12, 0.84, 0.14); // 左脚
+  addBox(b,  0.12, 0.42, 0,  0.12, 0.84, 0.14); // 右脚
+  addBox(b,  0,    1.16, 0,  0.40, 0.66, 0.24); // 胴
+  addBox(b,  0,    1.62, 0,  0.28, 0.28, 0.26); // 頭
+  addBox(b,  0,    1.15,-0.16, 0.46, 0.72, 0.06); // 背中のマント(奥の光へ向く背中側)
+  return {
+    positions:new Float32Array(b.positions),
+    normals:new Float32Array(b.normals),
+    indices:new Uint16Array(b.indices)
+  };
+}
+
+/* ============================================================
+   5. WebGL2 セットアップ
+   ============================================================ */
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl2");
+
+function compile(type, src){
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if(!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(sh));
+  return sh;
+}
+function link(vs, fs){
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+/* --- 地形 / 旅人 共通: 霧+リムライトのシェーダー --- */
+const SCENE_VERT = `#version 300 es
+layout(location=0) in vec3 aPosition;
+layout(location=1) in vec3 aNormal;
+uniform mat4 uModel, uView, uProj;
+uniform vec3 uCameraPos;
+out vec3 vNormal;
+out vec3 vWorldPos;
+out float vDist;
+void main(){
+  vec4 world = uModel * vec4(aPosition, 1.0);
+  vWorldPos = world.xyz;
+  vNormal = mat3(uModel) * aNormal;
+  vDist = length(uCameraPos - world.xyz);
+  gl_Position = uProj * uView * world;
+}`;
+
+const SCENE_FRAG = `#version 300 es
+precision highp float;
+in vec3 vNormal; in vec3 vWorldPos; in float vDist;
+uniform vec3 uCameraPos, uLightPos, uLightColor, uFogColor, uBaseColor;
+uniform float uFogDensity, uRimPower, uAmbient;
+out vec4 outColor;
+void main(){
+  vec3 N = normalize(vNormal);
+  vec3 V = normalize(uCameraPos - vWorldPos);
+  vec3 L = normalize(uLightPos - vWorldPos);
+  float ndotl = max(dot(N,L), 0.0);
+  float fresnel = pow(1.0 - max(dot(N,V), 0.0), uRimPower);
+  float backLit = smoothstep(-0.2, 0.7, dot(N,L));
+  vec3 base = uBaseColor * (uAmbient + ndotl*0.45);
+  vec3 rim = uLightColor * fresnel * backLit * 0.85;
+  vec3 color = base + rim;
+  float fog = 1.0 - exp(-uFogDensity * vDist * vDist * 0.0022);
+  color = mix(color, uFogColor, clamp(fog, 0.0, 1.0));
+  outColor = vec4(color, 1.0);
+}`;
+const sceneProgram = link(SCENE_VERT, SCENE_FRAG);
+const sceneU = {};
+["uModel","uView","uProj","uCameraPos","uLightPos","uLightColor","uFogColor",
+ "uBaseColor","uFogDensity","uRimPower","uAmbient"].forEach(n=>{
+  sceneU[n] = gl.getUniformLocation(sceneProgram, n);
+});
+
+function makeVAO(mesh){
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const pb = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, pb);
+  gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+  const nb = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, nb);
+  gl.bufferData(gl.ARRAY_BUFFER, mesh.normals, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(1,3,gl.FLOAT,false,0,0);
+  const ib = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
+  return { vao, count:mesh.indices.length };
+}
+
+const terrainMesh = createTerrain(80, 90, 46, 46, 20);
+const terrainVAO = makeVAO(terrainMesh);
+const travelerMesh = createTraveler();
+const travelerVAO = makeVAO(travelerMesh);
+const TRAVELER_POS = [0, 0, -12];
+
+/* --- 遠くの光源(月/灯り)を表すビルボード。常にカメラを向く --- */
+const GLOW_VERT = `#version 300 es
+layout(location=0) in vec2 aOffset;
+uniform vec3 uCenter, uRight, uUp;
+uniform mat4 uView, uProj;
+uniform float uSize;
+out vec2 vUv;
+void main(){
+  vUv = aOffset;
+  vec3 world = uCenter + uRight*aOffset.x*uSize + uUp*aOffset.y*uSize;
+  gl_Position = uProj * uView * vec4(world, 1.0);
+}`;
+const GLOW_FRAG = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform vec3 uColor;
+uniform float uIntensity;
+out vec4 outColor;
+void main(){
+  float d = length(vUv);
+  float glow = pow(clamp(1.0 - d, 0.0, 1.0), 2.2);
+  outColor = vec4(uColor * glow * uIntensity, glow * uIntensity);
+}`;
+const glowProgram = link(GLOW_VERT, GLOW_FRAG);
+const glowU = {};
+["uCenter","uRight","uUp","uView","uProj","uSize","uColor","uIntensity"].forEach(n=>{
+  glowU[n] = gl.getUniformLocation(glowProgram, n);
+});
+const glowVAO = gl.createVertexArray();
+gl.bindVertexArray(glowVAO);
+const glowBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, glowBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0);
+gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+const GLOW_POS = [10, 6, -42];
+
+/* --- 塵/蛍のような浮遊粒子。光を受けた塵だけがうっすら見える --- */
+const DUST_COUNT = 140;
+const dustSeed = new Float32Array(DUST_COUNT);
+const dustBase = new Float32Array(DUST_COUNT*3);
+for(let i=0;i<DUST_COUNT;i++){
+  dustSeed[i] = Math.random();
+  dustBase[i*3+0] = (Math.random()-0.5)*26;
+  dustBase[i*3+1] = Math.random()*9;
+  dustBase[i*3+2] = 6 - Math.random()*40;
+}
+const DUST_VERT = `#version 300 es
+layout(location=0) in vec3 aBase;
+layout(location=1) in float aSeed;
+uniform mat4 uView, uProj;
+uniform vec3 uCameraPos;
+uniform float uTime;
+out float vAlpha;
+void main(){
+  vec3 p = aBase;
+  p.y = mod(aBase.y + uTime*0.25 + aSeed*9.0, 9.0);
+  p.x += sin(uTime*0.15 + aSeed*18.0) * 0.6;
+  vec3 world = p;
+  float dist = length(uCameraPos - world);
+  gl_Position = uProj * uView * vec4(world, 1.0);
+  gl_PointSize = clamp(420.0 / max(dist, 0.5), 1.0, 7.0);
+  vAlpha = clamp(1.0 - dist/34.0, 0.0, 1.0);
+}`;
+const DUST_FRAG = `#version 300 es
+precision highp float;
+in float vAlpha;
+uniform vec3 uColor;
+out vec4 outColor;
+void main(){
+  vec2 c = gl_PointCoord*2.0 - 1.0;
+  float d = length(c);
+  float a = smoothstep(1.0, 0.0, d) * vAlpha * 0.55;
+  outColor = vec4(uColor, a);
+}`;
+const dustProgram = link(DUST_VERT, DUST_FRAG);
+const dustU = {};
+["uView","uProj","uCameraPos","uTime","uColor"].forEach(n=>{ dustU[n]=gl.getUniformLocation(dustProgram,n); });
+const dustVAO = gl.createVertexArray();
+gl.bindVertexArray(dustVAO);
+const dustBaseBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, dustBaseBuf);
+gl.bufferData(gl.ARRAY_BUFFER, dustBase, gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0);
+gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+const dustSeedBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, dustSeedBuf);
+gl.bufferData(gl.ARRAY_BUFFER, dustSeed, gl.STATIC_DRAW);
+gl.enableVertexAttribArray(1);
+gl.vertexAttribPointer(1,1,gl.FLOAT,false,0,0);
+
+gl.enable(gl.DEPTH_TEST);
+
+function resize(){
+  const dpr = Math.min(devicePixelRatio||1, 2);
+  canvas.width = innerWidth*dpr;
+  canvas.height = innerHeight*dpr;
+}
+addEventListener("resize", resize);
+resize();
+
+/* ============================================================
+   6. カメラのドリー経路(章立てウェイポイント)
+      スクロール進捗 t(0..1) から、区間ごとに eye/look/フォグ/光色を補間する
+   ============================================================ */
+const WAYPOINTS = [
+  { t:0.00, eye:[0.5, 10.5, 24], look:[0, 2.2, -8],  fogDensity:2.6, fogColor:[0.02,0.022,0.03], lightColor:[0.85,0.68,0.48], amb:0.10 },
+  { t:0.34, eye:[6.5, 4.4, 6],   look:[0, 1.7, -10], fogDensity:1.7, fogColor:[0.03,0.032,0.045],lightColor:[0.92,0.75,0.52], amb:0.13 },
+  { t:0.67, eye:[2.4, 2.1, -1],  look:[0, 1.4, -9],  fogDensity:1.0, fogColor:[0.05,0.046,0.05], lightColor:[0.98,0.83,0.6],  amb:0.16 },
+  { t:1.00, eye:[-1.6, 1.75, -8],look:[1.5, 2.4, -30],fogDensity:0.5,fogColor:[0.10,0.08,0.075],lightColor:[1.0,0.9,0.7],  amb:0.20 },
+];
+function sampleWaypoints(t){
+  t = Math.min(1, Math.max(0, t));
+  let a=WAYPOINTS[0], b=WAYPOINTS[WAYPOINTS.length-1], span=1;
+  for(let i=0;i<WAYPOINTS.length-1;i++){
+    if(t>=WAYPOINTS[i].t && t<=WAYPOINTS[i+1].t){
+      a=WAYPOINTS[i]; b=WAYPOINTS[i+1]; span=(b.t-a.t)||1; break;
+    }
+  }
+  const lt = (t-a.t)/span;
+  return {
+    eye: V3.lerp(a.eye,b.eye,lt),
+    look: V3.lerp(a.look,b.look,lt),
+    fogDensity: a.fogDensity+(b.fogDensity-a.fogDensity)*lt,
+    fogColor: V3.lerp(a.fogColor,b.fogColor,lt),
+    lightColor: V3.lerp(a.lightColor,b.lightColor,lt),
+    amb: a.amb+(b.amb-a.amb)*lt,
+  };
+}
+
+/* ============================================================
+   7. スクロール進捗の取得 + HUDテキストの表示切り替え
+   ============================================================ */
+let rawProgress = 0, smoothProgress = 0;
+function readScroll(){
+  const max = document.documentElement.scrollHeight - innerHeight;
+  rawProgress = max>0 ? Math.min(1, Math.max(0, scrollY/max)) : 0;
+}
+addEventListener("scroll", readScroll, {passive:true});
+readScroll();
+
+const chapters = [...document.querySelectorAll(".chapter[data-range]")];
+const railFill = document.getElementById("railFill");
+const railLabel = document.getElementById("railLabel");
+const KANJI = ["壱","弐","参","四"];
+function updateHUD(){
+  for(const el of chapters){
+    const [s,e] = el.dataset.range.split(",").map(Number);
+    el.classList.toggle("is-visible", smoothProgress>=s && smoothProgress<=e);
+  }
+  railFill.style.height = (smoothProgress*100).toFixed(1)+"%";
+  const idx = Math.min(3, Math.floor(smoothProgress*4));
+  railLabel.textContent = KANJI[idx] + " / 四";
+}
+
+/* ============================================================
+   8. 描画ループ
+   ============================================================ */
+let clock = 0;
+function render(){
+  requestAnimationFrame(render);
+  clock += 0.016;
+
+  smoothProgress += (rawProgress - smoothProgress) * 0.07;
+  updateHUD();
+
+  const s = sampleWaypoints(smoothProgress);
+  const eye = s.eye, look = s.look;
+  const view = mat4.lookAt(eye, look, [0,1,0]);
+  const proj = mat4.perspective(Math.PI/4, innerWidth/innerHeight, 0.1, 120);
+
+  gl.viewport(0,0,canvas.width,canvas.height);
+  gl.clearColor(s.fogColor[0], s.fogColor[1], s.fogColor[2], 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  gl.useProgram(sceneProgram);
+  gl.uniformMatrix4fv(sceneU.uView, false, view);
+  gl.uniformMatrix4fv(sceneU.uProj, false, proj);
+  gl.uniform3fv(sceneU.uCameraPos, eye);
+  gl.uniform3fv(sceneU.uLightPos, GLOW_POS);
+  gl.uniform3fv(sceneU.uLightColor, s.lightColor);
+  gl.uniform3fv(sceneU.uFogColor, s.fogColor);
+  gl.uniform1f(sceneU.uFogDensity, s.fogDensity);
+  gl.uniform1f(sceneU.uAmbient, s.amb);
+
+  // 地形
+  gl.uniformMatrix4fv(sceneU.uModel, false, mat4.identity());
+  gl.uniform3fv(sceneU.uBaseColor, [0.05,0.055,0.07]);
+  gl.uniform1f(sceneU.uRimPower, 4.5);
+  gl.bindVertexArray(terrainVAO.vao);
+  gl.drawElements(gl.TRIANGLES, terrainVAO.count, gl.UNSIGNED_SHORT, 0);
+
+  // 旅人シルエット
+  gl.uniformMatrix4fv(sceneU.uModel, false, mat4.translation(TRAVELER_POS));
+  gl.uniform3fv(sceneU.uBaseColor, [0.008,0.008,0.01]);
+  gl.uniform1f(sceneU.uRimPower, 2.6);
+  gl.bindVertexArray(travelerVAO.vao);
+  gl.drawElements(gl.TRIANGLES, travelerVAO.count, gl.UNSIGNED_SHORT, 0);
+
+  // 遠くの光源(加算合成でにじませる)
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+  gl.depthMask(false);
+
+  const basis = cameraBasis(eye, look, [0,1,0]);
+  gl.useProgram(glowProgram);
+  gl.uniformMatrix4fv(glowU.uView, false, view);
+  gl.uniformMatrix4fv(glowU.uProj, false, proj);
+  gl.uniform3fv(glowU.uCenter, GLOW_POS);
+  gl.uniform3fv(glowU.uRight, basis.x);
+  gl.uniform3fv(glowU.uUp, basis.y);
+  gl.uniform1f(glowU.uSize, 7 + smoothProgress*2);
+  gl.uniform3fv(glowU.uColor, s.lightColor);
+  gl.uniform1f(glowU.uIntensity, 0.9);
+  gl.bindVertexArray(glowVAO);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  // 塵/蛍
+  gl.useProgram(dustProgram);
+  gl.uniformMatrix4fv(dustU.uView, false, view);
+  gl.uniformMatrix4fv(dustU.uProj, false, proj);
+  gl.uniform3fv(dustU.uCameraPos, eye);
+  gl.uniform1f(dustU.uTime, clock);
+  gl.uniform3fv(dustU.uColor, s.lightColor);
+  gl.bindVertexArray(dustVAO);
+  gl.drawArrays(gl.POINTS, 0, DUST_COUNT);
+
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+}
+requestAnimationFrame(render);
+
+/* ============================================================
+   9. フィルムグレイン(2Dキャンバス上にランダムノイズタイルを描画)
+   ============================================================ */
+function initGrain(){
+  const gcanvas = document.getElementById("grain");
+  const gctx = gcanvas.getContext("2d");
+  const tile = document.createElement("canvas");
+  tile.width = tile.height = 96;
+  const tctx = tile.getContext("2d");
+  function paintTile(){
+    const img = tctx.createImageData(96,96);
+    for(let i=0;i<img.data.length;i+=4){
+      const v = Math.random()*255;
+      img.data[i]=img.data[i+1]=img.data[i+2]=v;
+      img.data[i+3]=255;
+    }
+    tctx.putImageData(img,0,0);
+  }
+  function resizeGrain(){
+    gcanvas.width = innerWidth; gcanvas.height = innerHeight;
+  }
+  function draw(){
+    paintTile();
+    gctx.clearRect(0,0,gcanvas.width,gcanvas.height);
+    const pattern = gctx.createPattern(tile, "repeat");
+    gctx.fillStyle = pattern;
+    gctx.fillRect(0,0,gcanvas.width,gcanvas.height);
+  }
+  addEventListener("resize", resizeGrain);
+  resizeGrain();
+  setInterval(draw, 90);
+  draw();
+}
+initGrain();
+</script>
+</body>
+</html>
