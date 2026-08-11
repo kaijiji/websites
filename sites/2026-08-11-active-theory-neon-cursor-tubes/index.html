@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neon Cursor Tubes — Active Theory 表現技法の再現デモ</title>
+<style>
+  :root {
+    --bg: #0b0b0b;
+    --fg: #f3f3f0;
+    --muted: #7a7a76;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    overflow-x: hidden;
+  }
+
+  /* ------------------------------------------------------------------
+   * 1. ヒーローセクション: マウス/タッチに追従する「ネオンチューブ」演出
+   * ------------------------------------------------------------------ */
+  .hero {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    min-height: 560px;
+    overflow: hidden;
+  }
+  #tube-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+    cursor: crosshair;
+  }
+  .hero-copy {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    pointer-events: none;
+    padding: 24px;
+  }
+  .hero-copy h1 {
+    font-size: clamp(28px, 6vw, 64px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+    mix-blend-mode: difference;
+  }
+  .hero-copy p {
+    margin: 0;
+    color: var(--muted);
+    font-size: clamp(13px, 1.6vw, 16px);
+    letter-spacing: 0.02em;
+    mix-blend-mode: difference;
+  }
+  .hero-hint {
+    position: absolute;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    pointer-events: none;
+  }
+
+  /* ------------------------------------------------------------------
+   * 2. プロジェクトグリッド: ホバーで隣接タイルが少し沈む「ラックフォーカス」演出
+   * ------------------------------------------------------------------ */
+  .grid-section {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 64px 24px 96px;
+  }
+  .grid-section h2 {
+    font-size: 14px;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin: 0 0 20px;
+  }
+  .tile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 14px;
+  }
+  .tile {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #151515;
+    transform: translateY(0) scale(1);
+    filter: brightness(1);
+    transition: transform 0.45s cubic-bezier(.16,.8,.24,1),
+                filter 0.45s ease,
+                opacity 0.45s ease;
+    cursor: pointer;
+  }
+  .tile .tile-bg {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 30% 30%, var(--c1), var(--c2) 70%);
+    opacity: 0.85;
+    transform: scale(1.15);
+    transition: transform 0.6s ease, opacity 0.45s ease;
+  }
+  .tile .tile-label {
+    position: absolute;
+    left: 14px;
+    bottom: 12px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    text-shadow: 0 1px 6px rgba(0,0,0,.5);
+  }
+  .tile .tile-index {
+    position: absolute;
+    right: 14px;
+    top: 12px;
+    font-size: 11px;
+    color: rgba(255,255,255,.6);
+  }
+  /* ホバー中のタイル本体: 少し拡大して手前に浮く */
+  .tile.is-hovered {
+    transform: translateY(-4px) scale(1.02);
+    filter: brightness(1.08);
+    z-index: 2;
+  }
+  .tile.is-hovered .tile-bg {
+    transform: scale(1.28);
+  }
+  /* ホバーされていない兄弟タイル: わずかに沈めて暗くする(rack focus) */
+  .tile.is-dimmed {
+    transform: translateY(2px) scale(0.985);
+    filter: brightness(0.62);
+    opacity: 0.85;
+  }
+
+  footer {
+    text-align: center;
+    padding: 32px 24px 64px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <canvas id="tube-canvas"></canvas>
+  <div class="hero-copy">
+    <h1>NEON CURSOR TUBES</h1>
+    <p>マウス(またはタッチ)を動かすと、画面の上端と下端からチューブ状の光が追いかけてきます</p>
+  </div>
+  <div class="hero-hint">MOVE YOUR CURSOR — 疑似的な「他の来場者」も同時に描画されています</div>
+</section>
+
+<section class="grid-section">
+  <h2>Rack-focus Hover Grid</h2>
+  <div class="tile-grid" id="tileGrid">
+    <!-- タイルは JS で生成します -->
+  </div>
+</section>
+
+<footer>
+  学習用の再現デモ / Reproduction demo for educational purposes only
+</footer>
+
+<script>
+/* ============================================================================
+ * PART 1: Neon Cursor Tubes
+ * ----------------------------------------------------------------------------
+ * 元サイト(Active Theory V6)では、自分と他の閲覧者のカーソル位置が
+ * WebSocket 等でリアルタイム共有され、画面の上端・下端からカーソル位置まで
+ * 伸びる「発光するチューブ」が複数人分同時に描かれます。
+ *
+ * このデモではサーバー通信は行わず、以下の2種類の "カーソル" を
+ * 同じ仕組み(TubeCursor クラス)で描画することで、その体験を単体ファイルで
+ * 再現しています。
+ *   - 自分のカーソル(マウス/タッチに追従)
+ *   - 疑似的な「他の来場者」(自動で動き回るダミーの座標)
+ *
+ * 実際に自分のプロジェクトへ組み込むときは、GHOST_COUNT を 0 にすれば
+ * 自分のカーソルだけのシンプルな演出として使えます。
+ * ========================================================================== */
+(function () {
+  const canvas = document.getElementById('tube-canvas');
+  const ctx = canvas.getContext('2d');
+  const hero = canvas.parentElement;
+
+  let width = 0, height = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  function resize() {
+    width = hero.clientWidth;
+    height = hero.clientHeight;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---- 設定値 -----------------------------------------------------------
+  const GHOST_COUNT = 3;        // 疑似「他の来場者」の人数
+  const TRAIL_LENGTH = 18;      // カーソル自身が残す軌跡の長さ
+  const HUE_SPEED = 18;         // 色相が1秒に回転する角度
+
+  // 1人分のカーソル(自分 or ゴースト)を表すクラス
+  class TubeCursor {
+    constructor({ hue, isSelf = false, label = '' }) {
+      this.isSelf = isSelf;
+      this.label = label;
+      this.hue = hue;
+      // 現在描画に使う座標(なめらかに追従させるため lerp する)
+      this.x = width / 2;
+      this.y = height / 2;
+      // 追従目標(マウス位置、またはゴーストの自律運動の目標)
+      this.tx = this.x;
+      this.ty = this.y;
+      // 上下の「アンカー」のX座標。カーソルより少し遅れて追従させることで
+      // チューブがしなるようなオーガニックな動きになる
+      this.topAnchorX = this.x;
+      this.bottomAnchorX = this.x;
+      this.trail = [];
+      this.seed = Math.random() * 1000;
+    }
+
+    setTarget(x, y) {
+      this.tx = x;
+      this.ty = y;
+    }
+
+    // ゴースト用: サイン波+ノイズ的なオフセットで自律的に動き回る
+    wander(t) {
+      const cx = width * (0.3 + 0.4 * ((this.seed % 5) / 5));
+      const cy = height * (0.3 + 0.4 * (((this.seed * 1.7) % 5) / 5));
+      const rx = width * 0.28;
+      const ry = height * 0.24;
+      this.setTarget(
+        cx + Math.sin(t * 0.6 + this.seed) * rx,
+        cy + Math.cos(t * 0.5 + this.seed * 1.3) * ry
+      );
+    }
+
+    update(dt) {
+      const smooth = this.isSelf ? 0.18 : 0.06; // 自分は機敏、ゴーストはゆったり
+      this.x += (this.tx - this.x) * smooth;
+      this.y += (this.ty - this.y) * smooth;
+      this.topAnchorX += (this.x - this.topAnchorX) * 0.05;
+      this.bottomAnchorX += (this.x - this.bottomAnchorX) * 0.05;
+
+      this.trail.unshift({ x: this.x, y: this.y });
+      if (this.trail.length > TRAIL_LENGTH) this.trail.pop();
+
+      this.hue = (this.hue + HUE_SPEED * dt) % 360;
+    }
+
+    // 上端 → カーソル → 下端 を結ぶ、しなやかな1本のチューブを描く
+    drawTube() {
+      const color = `hsl(${this.hue}, 90%, 60%)`;
+      const glow = `hsla(${this.hue}, 95%, 65%, 0.9)`;
+
+      ctx.save();
+      ctx.shadowColor = glow;
+      ctx.shadowBlur = 22;
+      ctx.lineCap = 'round';
+
+      // 太さと透明度を変えた複数のストロークを重ねてネオン管の"にじみ"を表現
+      const passes = [
+        { width: 10, alpha: 0.10 },
+        { width: 5, alpha: 0.35 },
+        { width: 2, alpha: 0.95 },
+      ];
+      passes.forEach((p) => {
+        ctx.beginPath();
+        ctx.moveTo(this.topAnchorX, 0);
+        ctx.quadraticCurveTo(
+          (this.topAnchorX + this.x) / 2,
+          this.y * 0.35,
+          this.x, this.y
+        );
+        ctx.quadraticCurveTo(
+          (this.bottomAnchorX + this.x) / 2,
+          this.y + (height - this.y) * 0.65,
+          this.bottomAnchorX, height
+        );
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = p.alpha;
+        ctx.lineWidth = p.width;
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+
+    // カーソル位置そのものが残す、短い彗星の尾のような軌跡
+    drawTrail() {
+      ctx.save();
+      ctx.lineCap = 'round';
+      for (let i = 1; i < this.trail.length; i++) {
+        const a = this.trail[i - 1];
+        const b = this.trail[i];
+        const t = 1 - i / this.trail.length;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = `hsla(${this.hue}, 95%, 70%, ${t * 0.5})`;
+        ctx.lineWidth = 6 * t;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    drawHead() {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.isSelf ? 5 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = `hsl(${this.hue}, 95%, 75%)`;
+      ctx.shadowColor = ctx.fillStyle;
+      ctx.shadowBlur = 16;
+      ctx.fill();
+      ctx.restore();
+
+      if (this.label) {
+        ctx.save();
+        ctx.font = '11px monospace';
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.fillText(this.label, this.x + 10, this.y - 10);
+        ctx.restore();
+      }
+    }
+
+    draw() {
+      this.drawTube();
+      this.drawTrail();
+      this.drawHead();
+    }
+  }
+
+  // ---- カーソル群のセットアップ -----------------------------------------
+  const self_ = new TubeCursor({ hue: 190, isSelf: true });
+  const ghosts = Array.from({ length: GHOST_COUNT }, (_, i) =>
+    new TubeCursor({ hue: (i * 90) + 30, label: `guest-${1000 + i * 37}` })
+  );
+  const cursors = [self_, ...ghosts];
+
+  function pointerPos(evt) {
+    const rect = canvas.getBoundingClientRect();
+    const p = evt.touches ? evt.touches[0] : evt;
+    return { x: p.clientX - rect.left, y: p.clientY - rect.top };
+  }
+  hero.addEventListener('mousemove', (e) => {
+    const { x, y } = pointerPos(e);
+    self_.setTarget(x, y);
+  });
+  hero.addEventListener('touchmove', (e) => {
+    const { x, y } = pointerPos(e);
+    self_.setTarget(x, y);
+  }, { passive: true });
+
+  let last = performance.now();
+  let elapsed = 0;
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    elapsed += dt;
+
+    ctx.clearRect(0, 0, width, height);
+
+    ghosts.forEach((g) => g.wander(elapsed));
+    cursors.forEach((c) => c.update(dt));
+    cursors.forEach((c) => c.draw());
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+/* ============================================================================
+ * PART 2: Rack-focus Hover Grid
+ * ----------------------------------------------------------------------------
+ * 元サイトのプロジェクト一覧は、1枚のタイルにホバーするとそのタイルだけが
+ * 拡大してプレビュー動画を再生し、隣接するタイルはわずかに沈んで暗くなる
+ * ことで、あたかもカメラのピントが移動した(rack focus)かのような視差を
+ * 演出しています。
+ *
+ * ここではタイルを生成 → ホバー時に「自分に is-hovered」「兄弟に is-dimmed」
+ * というクラスを付け外しするだけの、依存ライブラリなしの実装にしています。
+ * ========================================================================== */
+(function () {
+  const PROJECTS = [
+    { label: 'Nebula Runner', c1: '#7dd3fc', c2: '#1e3a8a' },
+    { label: 'Glasshouse',    c1: '#fca5f5', c2: '#701a75' },
+    { label: 'Drift Engine',  c1: '#fde68a', c2: '#92400e' },
+    { label: 'Kinetic Type',  c1: '#86efac', c2: '#065f46' },
+    { label: 'Terra Forma',   c1: '#fca5a5', c2: '#7f1d1d' },
+    { label: 'Signal Field',  c1: '#c4b5fd', c2: '#4c1d95' },
+  ];
+
+  const grid = document.getElementById('tileGrid');
+
+  const tiles = PROJECTS.map((proj, i) => {
+    const el = document.createElement('div');
+    el.className = 'tile';
+    el.style.setProperty('--c1', proj.c1);
+    el.style.setProperty('--c2', proj.c2);
+    el.innerHTML = `
+      <div class="tile-bg"></div>
+      <span class="tile-index">0${i + 1}</span>
+      <span class="tile-label">${proj.label}</span>
+    `;
+    grid.appendChild(el);
+    return el;
+  });
+
+  function setHover(activeIndex) {
+    tiles.forEach((el, i) => {
+      el.classList.toggle('is-hovered', i === activeIndex);
+      el.classList.toggle('is-dimmed', activeIndex !== null && i !== activeIndex);
+    });
+  }
+
+  tiles.forEach((el, i) => {
+    el.addEventListener('mouseenter', () => setHover(i));
+    el.addEventListener('mouseleave', () => setHover(null));
+    el.addEventListener('touchstart', () => setHover(i), { passive: true });
+  });
+})();
+</script>
+</body>
+</html>
