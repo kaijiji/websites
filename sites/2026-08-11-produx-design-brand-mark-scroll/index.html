@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FORMA STUDIO — 再現デモ（Produx Design 風 ブランドアイデンティティ・スクロール表現）</title>
+<style>
+  /* ============================================================
+     このファイルは学習用のオリジナル再現デモです。
+     Produx Design (https://www.produx.design/) の実際のソースコード・
+     デザイン・文言・画像は一切使用していません。
+     「GSAP + Three.js + Next.js を使ったブランドデザインスタジオの
+     ポートフォリオサイト」というジャンルで一般的に使われる表現技法を
+     観察・推測した上で、ゼロから独自に実装しています。
+     ============================================================ */
+
+  :root{
+    --ink:#111014;
+    --ink-soft:#1b1a1f;
+    --ecru:#f3ece0;
+    --ecru-dim:#c9c2b4;
+    --accent:#ff6b4a;
+    --dur:.6s;
+  }
+
+  *{ box-sizing:border-box; }
+
+  html,body{
+    margin:0;
+    padding:0;
+    background:var(--ink);
+    color:var(--ecru);
+    font-family: "Helvetica Neue", Arial, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    overflow-x:hidden;
+    cursor:none; /* カスタムカーソルを使うのでOSカーソルは消す */
+  }
+
+  a{ color:inherit; text-decoration:none; }
+
+  /* ---------- カスタムカーソル ----------
+     .cursor-dot は常時マウス座標へ lerp で追従する小さな丸。
+     data-cursor="hover" が付いた要素の上に乗ると拡大してリング状になる。 */
+  #cursor{
+    position:fixed;
+    top:0; left:0;
+    width:14px; height:14px;
+    margin:-7px 0 0 -7px;
+    border-radius:50%;
+    background:var(--ecru);
+    pointer-events:none;
+    z-index:999;
+    mix-blend-mode:difference;
+    transition:width .25s ease, height .25s ease, margin .25s ease, background .25s ease;
+    will-change:transform;
+  }
+  #cursor.hover{
+    width:56px; height:56px;
+    margin:-28px 0 0 -28px;
+    background:transparent;
+    border:1.5px solid var(--ecru);
+  }
+
+  /* ---------- 慣性スムーススクロール ----------
+     body 直下は本来の高さを持つ「空のダミー」(#scroll-spacer)にして
+     ネイティブスクロールバーを機能させ、実際に見えるコンテンツは
+     position:fixed の #scroll-content を transform で動かして追従させる。
+     これにより「スクロール位置」を自分の手で補間(lerp)でき、
+     Lenis / GSAP ScrollSmoother的な「重みのある」慣性スクロールが作れる。 */
+  #scroll-content{
+    position:fixed;
+    top:0; left:0; width:100%;
+    will-change:transform;
+  }
+
+  header{
+    position:fixed;
+    top:0; left:0; right:0;
+    z-index:100;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:28px 5vw;
+    mix-blend-mode:difference;
+  }
+  .logo{ font-weight:700; letter-spacing:.02em; font-size:15px; }
+  nav{ display:flex; gap:36px; font-size:13px; letter-spacing:.06em; text-transform:uppercase; }
+  nav a{ position:relative; display:inline-block; }
+
+  section{ position:relative; width:100%; padding:0 5vw; }
+
+  /* ---------- ヒーロー ---------- */
+  #hero{
+    height:100vh;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    overflow:hidden;
+  }
+  #gl-canvas{
+    position:absolute;
+    inset:0;
+    width:100%; height:100%;
+    z-index:0;
+  }
+  .hero-copy{
+    position:relative;
+    z-index:1;
+    pointer-events:none;
+  }
+  .hero-copy .eyebrow{
+    font-size:13px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--ecru-dim);
+    margin-bottom:18px;
+  }
+  .hero-copy h1{
+    font-size:clamp(40px, 9vw, 128px);
+    line-height:0.98;
+    margin:0;
+    font-weight:600;
+    letter-spacing:-.01em;
+  }
+  .hero-copy h1 em{ font-style:normal; color:var(--accent); }
+  .scroll-hint{
+    position:absolute;
+    left:5vw; bottom:36px;
+    font-size:12px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--ecru-dim);
+    display:flex; align-items:center; gap:10px;
+  }
+  .scroll-hint .line{ width:1px; height:32px; background:var(--ecru-dim); overflow:hidden; }
+  .scroll-hint .line span{ display:block; width:100%; height:100%; background:var(--accent); transform:translateY(-100%); animation:hint 1.8s ease-in-out infinite; }
+  @keyframes hint{ 0%{transform:translateY(-100%)} 50%{transform:translateY(0)} 100%{transform:translateY(100%)} }
+
+  /* ---------- ピン留めスクロールストーリーテリング ----------
+     .pin-spacer が文書内で高さ(スクロール量)を確保する「予約席」。
+     実際に見えるテキストは position:fixed の .pin-fixed で、
+     スクロール位置が spacer の範囲内にある間だけ画面中央に固定表示し、
+     進行度(progress)に応じて単語を1つずつ明るくしていく。 */
+  .pin-spacer{ height:280vh; }
+  .pin-fixed{
+    position:fixed;
+    top:0; left:0; width:100%; height:100vh;
+    display:flex; align-items:center; justify-content:center;
+    padding:0 5vw;
+    opacity:0;
+    pointer-events:none;
+  }
+  .pin-fixed.active{ opacity:1; }
+  .statement{
+    max-width:1000px;
+    font-size:clamp(24px, 4.4vw, 54px);
+    line-height:1.35;
+    font-weight:500;
+    letter-spacing:-.005em;
+  }
+  .statement .word{ color:#4a4842; transition:color .15s linear; }
+  .statement .word.lit{ color:var(--ecru); }
+  .statement .word.accent-lit{ color:var(--accent); }
+
+  /* ---------- ワークグリッド ---------- */
+  #work{ padding:160px 5vw 120px; }
+  .section-head{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:64px; flex-wrap:wrap; gap:16px; }
+  .section-head h2{ font-size:clamp(28px,4vw,44px); margin:0; font-weight:600; }
+  .section-head .count{ color:var(--ecru-dim); font-size:13px; letter-spacing:.08em; }
+  .grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:1px; background:#2a2830; }
+  @media (max-width:720px){ .grid{ grid-template-columns:1fr; } }
+  .card{
+    background:var(--ink);
+    padding:48px 40px;
+    min-height:260px;
+    display:flex; flex-direction:column; justify-content:space-between;
+    transition:transform .5s cubic-bezier(.16,1,.3,1), background .5s;
+    will-change:transform;
+  }
+  .card:hover{ background:var(--ink-soft); }
+  .card .num{ color:var(--ecru-dim); font-size:12px; letter-spacing:.08em; }
+  .card h3{ font-size:clamp(22px,2.6vw,32px); margin:24px 0 0; font-weight:600; }
+  .card p{ color:var(--ecru-dim); font-size:14px; margin-top:12px; max-width:32ch; }
+
+  /* ---------- フッター ---------- */
+  footer{
+    padding:140px 5vw 60px;
+    display:flex; flex-direction:column; gap:40px;
+  }
+  footer .cta{ font-size:clamp(32px,7vw,90px); font-weight:600; letter-spacing:-.01em; margin:0; }
+  footer .meta{ display:flex; justify-content:space-between; color:var(--ecru-dim); font-size:12px; letter-spacing:.08em; text-transform:uppercase; flex-wrap:wrap; gap:12px; }
+
+  .magnetic{ display:inline-block; will-change:transform; }
+</style>
+</head>
+<body>
+
+<div id="cursor"></div>
+
+<header>
+  <div class="logo">FORMA STUDIO*</div>
+  <nav>
+    <a href="#work" class="magnetic" data-cursor="hover">Work</a>
+    <a href="#" class="magnetic" data-cursor="hover">Studio</a>
+    <a href="#" class="magnetic" data-cursor="hover">Contact</a>
+  </nav>
+</header>
+
+<!-- 実スクロール量を確保するためのダミー。JSで本体と同じ高さに設定する -->
+<div id="scroll-spacer"></div>
+
+<div id="scroll-content">
+
+  <section id="hero">
+    <canvas id="gl-canvas"></canvas>
+    <div class="hero-copy">
+      <div class="eyebrow">Brand identity &amp; web design studio (fictional demo)</div>
+      <h1>Design<br>that <em>feels</em><br>right.</h1>
+    </div>
+    <div class="scroll-hint"><div class="line"><span></span></div>Scroll</div>
+  </section>
+
+  <!-- 空のダミー。ここが文書内で280vh分の高さを確保するだけの「予約席」で、
+       実際に見えるテキスト(.pin-fixed)は #scroll-content の外に置く(下記参照)。 -->
+  <div class="pin-spacer" id="statement-spacer"></div>
+
+  <section id="work">
+    <div class="section-head">
+      <h2>Selected work</h2>
+      <div class="count">(fictional projects — 04)</div>
+    </div>
+    <div class="grid">
+      <div class="card"><div><div class="num">01</div><h3>Alta Systems</h3><p>Rebrand &amp; identity system for a climate-data platform.</p></div></div>
+      <div class="card"><div><div class="num">02</div><h3>Nord Capital</h3><p>Visual language &amp; site for a venture fund.</p></div></div>
+      <div class="card"><div><div class="num">03</div><h3>Vellum</h3><p>Editorial identity for an independent publisher.</p></div></div>
+      <div class="card"><div><div class="num">04</div><h3>Kelp&amp;Co</h3><p>Packaging and web presence for a food brand.</p></div></div>
+    </div>
+  </section>
+
+  <footer>
+    <h2 class="cta">Let's talk<span style="color:var(--accent)">.</span></h2>
+    <div class="meta">
+      <span>FORMA STUDIO* — learning demo, not the real Produx Design site</span>
+      <span>© 2026</span>
+    </div>
+  </footer>
+
+</div>
+
+<!-- ピン留め中に実際に表示されるテキスト。
+     #scroll-content の transform(移動)の影響を受けないよう、
+     わざと #scroll-content の外(bodyの直下)に置いている。
+     position:fixed な要素は、transformを持つ祖先の内側にあると
+     その祖先を基準に「固定」されてしまう(CSSの仕様上の挙動)ため、
+     真にビューポート基準で固定したい要素は必ずtransformの外に置くこと。 -->
+<div class="pin-fixed" id="statement-fixed">
+  <p class="statement" id="statement-text">
+    We build <span class="word">brand</span> <span class="word">identities</span>
+    <span class="word">for</span> <span class="word">companies</span> <span class="word">that</span>
+    <span class="word">care</span> <span class="word">how</span> <span class="word">things</span>
+    <span class="word">feel</span> <span class="word">—</span> <span class="word">and</span>
+    <span class="word">how</span> <span class="word">they</span> <span class="word">are</span>
+    <span class="word">perceived</span> <span class="word accent">over</span>
+    <span class="word accent">time.</span>
+  </p>
+</div>
+
+<script>
+/* ==========================================================================
+   1. カスタムカーソル
+   ========================================================================== */
+(function(){
+  const dot = document.getElementById('cursor');
+  let mx = innerWidth/2, my = innerHeight/2, cx = mx, cy = my;
+  window.addEventListener('mousemove', e=>{ mx = e.clientX; my = e.clientY; });
+  document.querySelectorAll('[data-cursor="hover"]').forEach(el=>{
+    el.addEventListener('mouseenter', ()=> dot.classList.add('hover'));
+    el.addEventListener('mouseleave', ()=> dot.classList.remove('hover'));
+  });
+  function loop(){
+    cx += (mx-cx)*0.2; cy += (my-cy)*0.2;
+    dot.style.transform = `translate3d(${cx}px, ${cy}px, 0)`;
+    requestAnimationFrame(loop);
+  }
+  loop();
+})();
+
+/* ==========================================================================
+   2. マグネティックボタン
+   カーソルが要素の中心から一定距離内にある間、中心方向へ少し引き寄せられる。
+   使い方: 引き寄せたい要素に class="magnetic" を付けるだけ。
+   ========================================================================== */
+(function(){
+  const RANGE = 60;   // 反応する半径(px)
+  const STRENGTH = 0.4;
+  document.querySelectorAll('.magnetic').forEach(el=>{
+    el.addEventListener('mousemove', e=>{
+      const r = el.getBoundingClientRect();
+      const dx = e.clientX - (r.left + r.width/2);
+      const dy = e.clientY - (r.top + r.height/2);
+      el.style.transform = `translate(${dx*STRENGTH}px, ${dy*STRENGTH}px)`;
+    });
+    el.addEventListener('mouseleave', ()=>{ el.style.transform = 'translate(0,0)'; });
+  });
+})();
+
+/* ==========================================================================
+   3. 慣性スムーススクロール(Lenis / ScrollSmoother 風の自作版)
+   仕組み:
+   - #scroll-content を position:fixed にして transform:translateY で動かす。
+   - ネイティブの scrollY を「目標値」、実際に表示に使う値を lerpで
+     毎フレーム追いかけさせることで、指で押した重みのある慣性が出る。
+   - #scroll-spacer に本来必要な高さを与えることで、ブラウザのスクロールバー
+     自体は正しく機能させる(ホイール/タッチ操作はブラウザに任せる)。
+   使い方: そのままコピーすれば、ページ内の #scroll-content 配下が
+   全て慣性スクロールの対象になる。
+   ========================================================================== */
+const smooth = { current:0, target:0 };
+const content = document.getElementById('scroll-content');
+const spacer  = document.getElementById('scroll-spacer');
+
+function resizeSpacer(){
+  spacer.style.height = content.scrollHeight + 'px';
+}
+
+function tickScroll(){
+  smooth.target = window.scrollY;
+  smooth.current += (smooth.target - smooth.current) * 0.09;
+  if(Math.abs(smooth.target - smooth.current) < 0.05) smooth.current = smooth.target;
+  content.style.transform = `translate3d(0, ${-smooth.current}px, 0)`;
+}
+
+/* ==========================================================================
+   4. ピン留め(pin)スクロールストーリーテリング
+   仕組み:
+   - .pin-spacer が文書の高さの中に「280vh分の空白」を確保する(スクロール量の予約)。
+   - その範囲に scrollY が入っている間だけ、.pin-fixed を画面に固定表示し、
+     範囲内の進行度(0→1)を計算して単語を1つずつ点灯させる。
+   - GSAP ScrollTrigger の `pin:true` + テキストのスタガーリビールを、
+     外部ライブラリなしで再現したもの。
+   ========================================================================== */
+const words = document.querySelectorAll('#statement-text .word');
+const pinSpacer = document.getElementById('statement-spacer');
+const pinFixed  = document.getElementById('statement-fixed');
+
+function tickPin(){
+  // pin判定は補間済みの見た目のスクロール位置(smooth.current)を基準に行う。
+  const top = pinSpacer.offsetTop;
+  const range = pinSpacer.offsetHeight - window.innerHeight;
+  const raw = smooth.current;
+  const progress = Math.min(1, Math.max(0, (raw - top) / range));
+
+  // 「ピン留めされている(=spacerの高さ分だけ画面に居座っている)」区間は
+  // ちょうど [top, top+range] 。それ以外(進行度0未満・1超)では
+  // 通常のセクションと同じくスクロールで流れていってよいので非表示にする。
+  const active = raw >= top && raw <= top + range;
+  pinFixed.classList.toggle('active', active);
+
+  const lit = Math.floor(progress * words.length);
+  words.forEach((w,i)=>{
+    w.classList.toggle('lit', i < lit);
+    w.classList.toggle('accent-lit', i < lit && w.classList.contains('accent'));
+  });
+}
+
+function raf(){
+  tickScroll();
+  tickPin();
+  requestAnimationFrame(raf);
+}
+window.addEventListener('load', ()=>{ resizeSpacer(); raf(); });
+window.addEventListener('resize', resizeSpacer);
+
+/* ==========================================================================
+   5. WebGL ヒーロー背景:「息をするブランドマーク」
+   仕組み(レイマーチング / Signed Distance Field):
+   - Three.js 等のライブラリは使わず、生のWebGL + GLSLのみで実装。
+   - フラグメントシェーダー内で、3〜4個の球(メタボール)を smooth-union
+     してひとつの有機的な塊(ブランドマークのような抽象オブジェクト)を作る。
+   - 各球の中心は時間で少しずつ軌道運動し、半径もサイン波で揺れることで
+     「呼吸している」ような質感になる。
+   - マウス位置に応じてカメラ(レイの原点)を回転させ、ホバーで視点が
+     ついてくるパララックス感を出す。
+   使い方: <canvas id="gl-canvas"></canvas> をページに置き、
+   initBrandMarkWebGL('gl-canvas') を呼ぶだけ。他のページにも移植可能。
+   ========================================================================== */
+function initBrandMarkWebGL(canvasId){
+  const canvas = document.getElementById(canvasId);
+  const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  if(!gl){ canvas.style.display = 'none'; return; }
+
+  const vertSrc = `
+    attribute vec2 aPos;
+    void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }
+  `;
+
+  const fragSrc = `
+    precision highp float;
+    uniform vec2 uRes;
+    uniform float uTime;
+    uniform vec2 uMouse; // -1..1
+
+    mat2 rot(float a){ float s=sin(a),c=cos(a); return mat2(c,-s,s,c); }
+
+    float sdSphere(vec3 p, float r){ return length(p) - r; }
+
+    float smin(float a, float b, float k){
+      float h = clamp(0.5 + 0.5*(b-a)/k, 0.0, 1.0);
+      return mix(b, a, h) - k*h*(1.0-h);
+    }
+
+    /* 4つのメタボールをスムーズ合成して1つの有機的な塊にする */
+    float map(vec3 p){
+      float t = uTime;
+      vec3 p1 = p - vec3(sin(t*0.6)*0.35, cos(t*0.5)*0.3, 0.0);
+      vec3 p2 = p - vec3(cos(t*0.4)*0.4, sin(t*0.7)*0.25, sin(t*0.3)*0.2);
+      vec3 p3 = p - vec3(sin(t*0.8+2.0)*0.25, cos(t*0.6+1.0)*0.35, cos(t*0.5)*0.2);
+      vec3 p4 = p;
+
+      float r1 = 0.42 + 0.04*sin(t*1.3);
+      float r2 = 0.36 + 0.05*sin(t*1.7+1.0);
+      float r3 = 0.30 + 0.04*sin(t*1.1+2.0);
+      float r4 = 0.5  + 0.03*sin(t*0.9);
+
+      float d = sdSphere(p1, r1);
+      d = smin(d, sdSphere(p2, r2), 0.45);
+      d = smin(d, sdSphere(p3, r3), 0.45);
+      d = smin(d, sdSphere(p4, r4), 0.35);
+      return d;
+    }
+
+    vec3 calcNormal(vec3 p){
+      float e = 0.0015;
+      return normalize(vec3(
+        map(p+vec3(e,0,0)) - map(p-vec3(e,0,0)),
+        map(p+vec3(0,e,0)) - map(p-vec3(0,e,0)),
+        map(p+vec3(0,0,e)) - map(p-vec3(0,0,e))
+      ));
+    }
+
+    void main(){
+      vec2 uv = (gl_FragCoord.xy - 0.5*uRes) / min(uRes.x, uRes.y);
+
+      /* カメラ: マウスで少し軌道を回すだけの固定距離レイマーチカメラ */
+      float yaw   = uMouse.x * 0.6 + uTime*0.05;
+      float pitch = uMouse.y * 0.35;
+      vec3 ro = vec3(0.0, 0.0, 2.6);
+      ro.yz *= rot(pitch);
+      ro.xz *= rot(yaw);
+
+      vec3 fwd = normalize(-ro);
+      vec3 right = normalize(cross(vec3(0.0,1.0,0.0), fwd));
+      vec3 up = cross(fwd, right);
+      vec3 rd = normalize(fwd + uv.x*right + uv.y*up);
+
+      float dist = 0.0;
+      float t = 0.0;
+      bool hit = false;
+      for(int i=0;i<80;i++){
+        vec3 p = ro + rd*t;
+        float d = map(p);
+        if(d < 0.0015){ hit = true; break; }
+        t += d;
+        if(t > 6.0) break;
+      }
+
+      /* 背景: 縦グラデーション(#111014 -> #1c1a20 相当) */
+      vec3 bg = mix(vec3(0.043,0.039,0.047), vec3(0.09,0.085,0.10), uv.y*0.5+0.5);
+
+      if(!hit){ gl_FragColor = vec4(bg, 1.0); return; }
+
+      vec3 p = ro + rd*t;
+      vec3 n = calcNormal(p);
+      vec3 lightDir = normalize(vec3(0.5, 0.7, 0.6));
+      float diff = max(dot(n, lightDir), 0.0);
+      float fres = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+
+      vec3 base = vec3(0.95, 0.92, 0.88);      /* ecru */
+      vec3 accent = vec3(1.0, 0.42, 0.29);      /* accent orange */
+      vec3 col = mix(base*0.15, base, diff);
+      col = mix(col, accent, fres*0.55);
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function compile(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+      console.error(gl.getShaderInfoLog(s));
+    }
+    return s;
+  }
+
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vertSrc));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fragSrc));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  const quad = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  const uRes = gl.getUniformLocation(prog, 'uRes');
+  const uTime = gl.getUniformLocation(prog, 'uTime');
+  const uMouse = gl.getUniformLocation(prog, 'uMouse');
+
+  let mouse = {x:0, y:0};
+  window.addEventListener('mousemove', e=>{
+    mouse.x = (e.clientX / innerWidth) * 2 - 1;
+    mouse.y = (e.clientY / innerHeight) * 2 - 1;
+  });
+
+  function resize(){
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    gl.viewport(0,0,canvas.width, canvas.height);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const start = performance.now();
+  /* マウスの値も lerp で滑らかに追従させ、カクつきを消す */
+  let smx=0, smy=0;
+  function draw(){
+    smx += (mouse.x - smx)*0.05;
+    smy += (mouse.y - smy)*0.05;
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, (performance.now()-start)/1000);
+    gl.uniform2f(uMouse, smx, -smy);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(draw);
+  }
+  draw();
+}
+initBrandMarkWebGL('gl-canvas');
+</script>
+</body>
+</html>
