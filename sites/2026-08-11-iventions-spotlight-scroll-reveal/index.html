@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NORTHBEAM — 再現デモ（Iventions 風 WebGLスポットライト・スクロールリビール）</title>
+<style>
+  /* ============================================================
+     このファイルは学習用のオリジナル再現デモです。
+     Iventions (https://iventions.com/) の実際のソースコード・
+     デザイン・文言・画像は一切使用していません。
+     「舞台照明のようなスポットライトがスクロールに合わせて
+     プロジェクトを1つずつ照らし出す」という、検索で把握できた
+     コンセプトだけを手がかりに、ゼロから独自に実装しています。
+     架空のイベント制作会社「NORTHBEAM」・架空の案件名を使用しており、
+     実在の企業・人物とは関係ありません。
+     ============================================================ */
+
+  :root{
+    --stage:#050506;
+    --ink:#f2efe9;
+    --ink-dim:#8b8a8f;
+    --gold:#ffcf8a;
+  }
+
+  *{ box-sizing:border-box; }
+
+  html,body{
+    margin:0;
+    padding:0;
+    background:var(--stage);
+    color:var(--ink);
+    font-family:"Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", sans-serif;
+    overflow-x:hidden;
+  }
+
+  /* スポットライトを描画する固定WebGLキャンバス。ページ全体の背景として敷く */
+  #gl{
+    position:fixed;
+    inset:0;
+    width:100%;
+    height:100%;
+    z-index:0;
+    display:block;
+  }
+
+  /* 画面端をさらに沈ませるビネット。舞台の暗がりを強調する */
+  .vignette{
+    position:fixed;
+    inset:0;
+    z-index:1;
+    pointer-events:none;
+    background:radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,.75) 100%);
+  }
+
+  main{ position:relative; z-index:2; }
+
+  header.hero{
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    align-items:flex-start;
+    padding:8vh 8vw;
+  }
+  .eyebrow{
+    letter-spacing:.3em;
+    text-transform:uppercase;
+    font-size:.72rem;
+    color:var(--gold);
+    margin:0 0 1.2rem;
+  }
+  h1.title{
+    font-size:clamp(2.4rem, 7vw, 5.4rem);
+    line-height:1.02;
+    margin:0 0 1.4rem;
+    font-weight:600;
+    max-width:14ch;
+  }
+  header.hero p{
+    max-width:42ch;
+    color:var(--ink-dim);
+    font-size:1.05rem;
+    line-height:1.6;
+  }
+  .scroll-hint{
+    margin-top:3rem;
+    font-size:.75rem;
+    letter-spacing:.15em;
+    color:var(--ink-dim);
+  }
+
+  /* ---- プロジェクト（案件）セクション ----
+     デフォルトは "shadow"（暗がり）状態。JSが --lit カスタムプロパティを
+     0〜1で更新し、スポットライトが近づくほど明るく・鮮やかになる。 */
+  section.project{
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    padding:6vh 8vw;
+    --lit:0;
+  }
+  section.project.align-left{ justify-content:flex-start; }
+  section.project.align-right{ justify-content:flex-end; }
+
+  .card{
+    max-width:560px;
+    /* --lit を使って明度・彩度・浮き上がりを連動させる */
+    filter: brightness(calc(0.35 + var(--lit) * 0.85))
+            saturate(calc(0.3 + var(--lit) * 0.9));
+    opacity: calc(0.45 + var(--lit) * 0.55);
+    transform: translateY(calc((1 - var(--lit)) * 18px));
+    transition: filter .08s linear, opacity .08s linear, transform .08s linear;
+  }
+  .card .num{
+    font-size:.8rem;
+    color:var(--gold);
+    letter-spacing:.2em;
+    margin-bottom:.8rem;
+  }
+  .card h2{
+    font-size:clamp(1.8rem, 4vw, 3rem);
+    margin:0 0 .8rem;
+    font-weight:600;
+  }
+  .card p{
+    color:var(--ink-dim);
+    line-height:1.7;
+    max-width:46ch;
+  }
+  .card .tags{
+    margin-top:1.4rem;
+    display:flex;
+    gap:.6rem;
+    flex-wrap:wrap;
+  }
+  .card .tags span{
+    font-size:.7rem;
+    letter-spacing:.08em;
+    padding:.35em .8em;
+    border:1px solid rgba(242,239,233,.25);
+    border-radius:999px;
+    color:var(--ink-dim);
+  }
+
+  footer{
+    min-height:60vh;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+    text-align:center;
+    padding:8vh 8vw;
+    --lit:0;
+    filter: brightness(calc(0.35 + var(--lit) * 0.85));
+    opacity: calc(0.45 + var(--lit) * 0.55);
+    transition: filter .08s linear, opacity .08s linear;
+  }
+  footer h3{
+    font-size:clamp(1.6rem, 4vw, 2.6rem);
+    margin:0 0 .6rem;
+  }
+  footer p{ color:var(--ink-dim); }
+
+  @media (prefers-reduced-motion: reduce){
+    .card{ transition:none; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+<div class="vignette"></div>
+
+<main>
+  <header class="hero">
+    <p class="eyebrow">Northbeam — Experience &amp; Event Design</p>
+    <h1 class="title">Step into<br>the spotlight.</h1>
+    <p>私たちはブランドのための舞台をつくる制作会社です。照明が1つの物語を照らすように、
+       スクロールごとに次の案件へと光が移っていきます。</p>
+    <p class="scroll-hint">Scroll ↓</p>
+  </header>
+
+  <!-- 各セクションは data-color で自分の「照明の色」を、data-align で光の左右の寄りを指定する -->
+  <section class="project align-left" data-color="255,207,138" data-align="0.32">
+    <div class="card">
+      <div class="num">01 — Aurora Summit</div>
+      <h2>基調講演のための没入型ステージ</h2>
+      <p>3面LEDと可動照明リグを用いた、経営層向けカンファレンスのメインステージ演出。
+         登壇者の動きに合わせて光と映像が呼応するよう設計しました。</p>
+      <div class="tags"><span>Stage Design</span><span>Lighting</span><span>Live Show</span></div>
+    </div>
+  </section>
+
+  <section class="project align-right" data-color="150,200,255" data-align="0.68">
+    <div class="card">
+      <div class="num">02 — Glasshouse Gala</div>
+      <h2>プロダクトローンチのための一夜限りの空間</h2>
+      <p>ガラス張りの会場全体を1つの発表装置として再構成。来場者の動線そのものを
+         プロダクトストーリーの時間軸にしています。</p>
+      <div class="tags"><span>Spatial Design</span><span>Brand Launch</span></div>
+    </div>
+  </section>
+
+  <section class="project align-left" data-color="255,150,150" data-align="0.30">
+    <div class="card">
+      <div class="num">03 — Meridian Games</div>
+      <h2>開会式のための光のコレオグラフィ</h2>
+      <p>数千個の同期ライトと花火に代わるドローン演出を組み合わせ、
+         スタジアム全体を1つのキャンバスに見立てた開会式を制作しました。</p>
+      <div class="tags"><span>Ceremony</span><span>Drone Show</span><span>Sync Lighting</span></div>
+    </div>
+  </section>
+
+  <section class="project align-right" data-color="190,255,190" data-align="0.70">
+    <div class="card">
+      <div class="num">04 — Constellation Prize</div>
+      <h2>受賞の瞬間だけを照らす授賞式演出</h2>
+      <p>会場の照明をほぼ暗転させ、受賞者が壇上に立った瞬間だけ光が生まれる
+         演出設計。静けさそのものを主役にしました。</p>
+      <div class="tags"><span>Awards Show</span><span>Broadcast</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <h3>Let's build your stage.</h3>
+    <p>hello@northbeam.example — このデモ内の社名・案件・連絡先はすべて架空のものです。</p>
+  </footer>
+</main>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ============================================================
+     initSpotlightStage(canvas, sections)
+     ------------------------------------------------------------
+     舞台照明のような1本のスポットライトをWebGLで描画し、
+     ページ中央付近の「灯りが当たる高さ」に居座らせたまま、
+     スクロールで各セクションをその灯りの中へ出入りさせることで
+     「1つずつ照らし出す」演出を作る関数。
+
+     他プロジェクトへの移植方法:
+       1. <canvas id="gl"> と、暗くしておきたい要素(--lit変数を
+          brightness/opacityに使うCSS)を用意する
+       2. initSpotlightStage(canvas, [{el, color:[r,g,b], align}]) を呼ぶ
+       3. あとは自動でrequestAnimationFrameループが面倒を見る
+     ============================================================ */
+  function initSpotlightStage(canvas, sections){
+    var gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    if (!gl){
+      // WebGL非対応環境向けの簡易フォールバック: 何もしない
+      // (CSSの --lit だけでも「ぼんやり明暗が変わる」体験は成立する)
+      fallbackLitLoop(sections);
+      return;
+    }
+
+    var vertSrc =
+      "attribute vec2 aPos;" +
+      "void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }";
+
+    // フラグメントシェーダー: 画面上部の「光源」から、現在のスポット位置(uSpot)へ
+    // 向かって伸びる円錐状のビームと、その先端の丸いグロー、微細なダスト粒子を合成する
+    var fragSrc =
+      "precision highp float;" +
+      "uniform vec2 uResolution;" +
+      "uniform vec2 uSpot;" +
+      "uniform vec3 uColor;" +
+      "uniform float uTime;" +
+      "uniform float uIntensity;" +
+      "float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233))) * 43758.5453); }" +
+      "void main(){" +
+      "  vec2 uv = vec2(gl_FragCoord.x, uResolution.y - gl_FragCoord.y);" +
+      "  vec2 spot = uSpot;" +
+      "  vec2 source = vec2(uResolution.x * 0.5, -uResolution.y * 0.35);" +
+      "  vec2 dir = normalize(spot - source);" +
+      "  vec2 toUv = uv - source;" +
+      "  float along = dot(toUv, dir);" +
+      "  vec2 proj = source + dir * along;" +
+      "  float perp = length(uv - proj);" +
+      "  float beamLen = length(spot - source);" +
+      "  float t = clamp(along / beamLen, 0.0, 1.0);" +
+      "  float coneWidth = mix(30.0, 320.0, t);" +
+      "  float shaft = smoothstep(coneWidth, 0.0, perp) * smoothstep(0.0, 0.12, t);" +
+      "  float glow = smoothstep(300.0, 0.0, length(uv - spot));" +
+      "  float n = hash(floor(uv * 0.6) + floor(uTime * 6.0));" +
+      "  float dust = step(0.986, n) * shaft * 1.4;" +
+      "  float light = (shaft * 0.5 + glow * 0.55 + dust) * uIntensity;" +
+      "  vec3 base = vec3(0.02, 0.019, 0.023);" +
+      "  vec3 col = base + uColor * light;" +
+      "  gl_FragColor = vec4(col, 1.0);" +
+      "}";
+
+    function compile(type, src){
+      var s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      return s;
+    }
+
+    var prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vertSrc));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fragSrc));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    var buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+    var aPos = gl.getAttribLocation(prog, "aPos");
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    var uResolution = gl.getUniformLocation(prog, "uResolution");
+    var uSpot = gl.getUniformLocation(prog, "uSpot");
+    var uColor = gl.getUniformLocation(prog, "uColor");
+    var uTime = gl.getUniformLocation(prog, "uTime");
+    var uIntensity = gl.getUniformLocation(prog, "uIntensity");
+
+    function resize(){
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    // 現在の色・スポット位置(見た目に使う値)と、目標値をなめらかにlerpでつなぐ
+    var current = { x: window.innerWidth * 0.5, y: window.innerHeight * 0.42, r: 255, g: 207, b: 138 };
+    var intensity = { v: 0 };
+    var startTime = null;
+
+    function frame(ts){
+      if (startTime === null) startTime = ts;
+      var elapsed = (ts - startTime) / 1000;
+
+      // 起動直後にスポットライトが灯る「点灯」演出
+      var introT = Math.min(elapsed / 1.4, 1);
+      var introEase = 1 - Math.pow(1 - introT, 3);
+
+      // どのセクションが画面の「照明ゾーン」に最も近いかを調べる
+      var litY = window.innerHeight * 0.42;
+      var best = null, bestDist = Infinity;
+      for (var i = 0; i < sections.length; i++){
+        var s = sections[i];
+        var rect = s.el.getBoundingClientRect();
+        var centerY = rect.top + rect.height / 2;
+        var dist = Math.abs(centerY - litY);
+        var lit = Math.max(0, 1 - dist / (window.innerHeight * 0.62));
+        lit = lit * lit * (3 - 2 * lit); // smoothstep
+        s.el.style.setProperty("--lit", lit.toFixed(3));
+        if (dist < bestDist){ bestDist = dist; best = s; }
+      }
+
+      var targetX = best ? window.innerWidth * best.align : window.innerWidth * 0.5;
+      var targetColor = best ? best.color : [255, 207, 138];
+
+      var lerp = 0.06;
+      current.x += (targetX - current.x) * lerp;
+      current.y += (litY - current.y) * lerp;
+      current.r += (targetColor[0] - current.r) * lerp;
+      current.g += (targetColor[1] - current.g) * lerp;
+      current.b += (targetColor[2] - current.b) * lerp;
+      intensity.v += (introEase - intensity.v) * 0.1;
+
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      gl.uniform2f(uResolution, canvas.width, canvas.height);
+      gl.uniform2f(uSpot, current.x * dpr, current.y * dpr);
+      gl.uniform3f(uColor, current.r / 255, current.g / 255, current.b / 255);
+      gl.uniform1f(uTime, elapsed);
+      gl.uniform1f(uIntensity, intensity.v);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // WebGL非対応時: せめて --lit だけは更新して、明暗のスクロール連動を残す
+  function fallbackLitLoop(sections){
+    function tick(){
+      var litY = window.innerHeight * 0.42;
+      sections.forEach(function(s){
+        var rect = s.el.getBoundingClientRect();
+        var centerY = rect.top + rect.height / 2;
+        var dist = Math.abs(centerY - litY);
+        var lit = Math.max(0, 1 - dist / (window.innerHeight * 0.62));
+        s.el.style.setProperty("--lit", (lit * lit * (3 - 2 * lit)).toFixed(3));
+      });
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // ---- 初期化: DOMから .project / footer を集めて渡すだけ ----
+  var canvas = document.getElementById("gl");
+  var sections = Array.prototype.map.call(document.querySelectorAll("section.project"), function(el){
+    var color = el.getAttribute("data-color").split(",").map(Number);
+    var align = parseFloat(el.getAttribute("data-align"));
+    return { el: el, color: color, align: align };
+  });
+  var footerEl = document.querySelector("footer");
+  sections.push({ el: footerEl, color: [255, 207, 138], align: 0.5 });
+
+  initSpotlightStage(canvas, sections);
+})();
+</script>
+
+</body>
+</html>
