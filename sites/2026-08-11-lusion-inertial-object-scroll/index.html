@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOVA OBJECT — 再現デモ（Lusion 風 慣性オブジェクト × スクロール深度演出）</title>
+<style>
+  /* ============================================================
+     このファイルは学習用のオリジナル再現デモです。
+     Lusion (https://lusion.co/) の実際のソースコード・デザイン・
+     文言・3Dモデル・画像は一切使用していません。
+     「マウスの動きに慣性(重さ)を持って追従する1個の3Dオブジェクトを
+     ヒーローに置き、スクロールでカメラがZ軸方向に奥へ進んでいく」
+     という、Lusion のサイトで観察できる表現ジャンルを理解した上で、
+     ゼロから独自の疑似メタリック・シェーダーとオブジェクト形状で
+     再実装しています。
+     ============================================================ */
+
+  :root{
+    --bg:#07080c;
+    --fg:#f2f3f7;
+    --dim:#8b8fa3;
+    --accent:#7c8cff;
+  }
+
+  *{ box-sizing:border-box; }
+
+  html,body{
+    margin:0;
+    padding:0;
+    background:var(--bg);
+    color:var(--fg);
+    font-family: "Helvetica Neue", Arial, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    cursor:none; /* 独自カーソルを表示するのでOS標準カーソルは消す */
+  }
+
+  /* スクロール量を確保するためのダミーの高さ。
+     実際のコンテンツはすべて #hud 内の position:fixed 要素で描いており、
+     ここでは「スクロールの進捗値」だけを取得するために高さを使う。 */
+  #scroll-spacer{ height: 500vh; }
+
+  canvas#gl{
+    position:fixed;
+    inset:0;
+    width:100%;
+    height:100%;
+    display:block;
+  }
+
+  #hud{
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    z-index:2;
+  }
+
+  header.top{
+    position:fixed;
+    top:0; left:0; right:0;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:28px clamp(20px,5vw,56px);
+    z-index:5;
+    pointer-events:none;
+  }
+  header.top .logo{
+    font-weight:700;
+    letter-spacing:.04em;
+    pointer-events:auto;
+  }
+  nav.top-nav{
+    display:flex;
+    gap:clamp(16px,3vw,36px);
+    pointer-events:auto;
+  }
+  nav.top-nav a{
+    color:var(--fg);
+    text-decoration:none;
+    font-size:13px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    opacity:.75;
+  }
+
+  .panel{
+    position:fixed;
+    inset:0;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    padding:0 clamp(20px,8vw,120px);
+    opacity:0;
+    transform:translateY(24px);
+    transition:opacity .5s ease, transform .6s ease;
+    pointer-events:none;
+  }
+  .panel.is-visible{
+    opacity:1;
+    transform:translateY(0);
+    pointer-events:auto;
+  }
+  .panel .eyebrow{
+    color:var(--accent);
+    font-size:12px;
+    letter-spacing:.2em;
+    text-transform:uppercase;
+    margin:0 0 14px;
+  }
+  .panel h1, .panel h2{
+    font-weight:600;
+    line-height:1.05;
+    margin:0 0 18px;
+    font-size:clamp(34px,6vw,84px);
+    max-width:14ch;
+  }
+  .panel p{
+    max-width:44ch;
+    color:var(--dim);
+    font-size:clamp(14px,1.6vw,17px);
+    line-height:1.7;
+    margin:0 0 28px;
+  }
+  .cta{
+    align-self:flex-start;
+    display:inline-flex;
+    align-items:center;
+    gap:10px;
+    padding:14px 26px;
+    border:1px solid rgba(242,243,247,.25);
+    border-radius:999px;
+    color:var(--fg);
+    text-decoration:none;
+    font-size:13px;
+    letter-spacing:.05em;
+    text-transform:uppercase;
+    will-change:transform;
+  }
+
+  #cursor{
+    position:fixed;
+    top:0; left:0;
+    width:14px; height:14px;
+    margin:-7px 0 0 -7px;
+    border-radius:50%;
+    background:var(--fg);
+    z-index:9999;
+    pointer-events:none;
+    transition:width .25s ease, height .25s ease, margin .25s ease, background .25s ease;
+  }
+  #cursor.is-hover{
+    width:52px; height:52px;
+    margin:-26px 0 0 -26px;
+    background:transparent;
+    border:1px solid var(--fg);
+  }
+
+  .progress-rail{
+    position:fixed;
+    right:clamp(16px,4vw,40px);
+    top:50%;
+    transform:translateY(-50%);
+    width:2px;
+    height:120px;
+    background:rgba(242,243,247,.15);
+    z-index:5;
+  }
+  .progress-rail i{
+    position:absolute;
+    left:0; top:0;
+    width:100%;
+    background:var(--accent);
+    height:0%;
+  }
+
+  @media (pointer:coarse){
+    body{ cursor:auto; }
+    #cursor{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+<div id="scroll-spacer"></div>
+
+<div id="hud">
+  <header class="top">
+    <div class="logo">NOVA OBJECT</div>
+    <nav class="top-nav">
+      <a href="#" data-magnetic>Work</a>
+      <a href="#" data-magnetic>Studio</a>
+      <a href="#" data-magnetic>Contact</a>
+    </nav>
+  </header>
+
+  <section class="panel" data-range="0,0.16">
+    <p class="eyebrow">Scroll to explore</p>
+    <h1>1つのオブジェクトを、<br>指先の重さで動かす。</h1>
+    <p>マウスを動かすと球体が慣性を持って追いかけてきます。スクロールするとカメラが奥へ進み、物語が切り替わります。</p>
+    <a class="cta" href="#" data-magnetic>Scroll Down ↓</a>
+  </section>
+
+  <section class="panel" data-range="0.22,0.46">
+    <p class="eyebrow">Chapter 01</p>
+    <h2>重さのあるインタラクション</h2>
+    <p>回転はマウス位置に瞬時に追従せず、バネ・ダンパー物理でゆっくり収束します。これが「軽い」ではなく「重い」質感を生みます。</p>
+  </section>
+
+  <section class="panel" data-range="0.5,0.74">
+    <p class="eyebrow">Chapter 02</p>
+    <h2>スクロール = 奥行き移動</h2>
+    <p>カメラは横に流れるのではなく、Z軸方向に前進します。オブジェクトのそばを通り抜けるような感覚を作ります。</p>
+  </section>
+
+  <section class="panel" data-range="0.8,1.02">
+    <p class="eyebrow">Chapter 03</p>
+    <h2>最後まで、ひとつの舞台で。</h2>
+    <p>ページ全体を通して主役は1つのオブジェクトだけ。色調と光の当たり方だけで章の切り替わりを演出しています。</p>
+    <a class="cta" href="#" data-magnetic>Get in Touch</a>
+  </section>
+
+  <div class="progress-rail"><i id="progressFill"></i></div>
+</div>
+
+<div id="cursor"></div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   1. 小さな行列演算ユーティリティ（列優先 / Float32Array 16要素）
+      Three.js 等のライブラリを使わず、必要最小限だけを自前で実装。
+   ============================================================ */
+const mat4 = {
+  perspective(fovy, aspect, near, far){
+    const f = 1 / Math.tan(fovy / 2);
+    const nf = 1 / (near - far);
+    const out = new Float32Array(16);
+    out[0] = f / aspect; out[5] = f; out[10] = (far + near) * nf;
+    out[11] = -1; out[14] = 2 * far * near * nf;
+    return out;
+  },
+  lookAt(eye, center, up){
+    const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+    const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+    const norm=(a)=>{ const l=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/l,a[1]/l,a[2]/l]; };
+    const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+    const z = norm(sub(eye, center));
+    const x = norm(cross(up, z));
+    const y = cross(z, x);
+    return new Float32Array([
+      x[0], y[0], z[0], 0,
+      x[1], y[1], z[1], 0,
+      x[2], y[2], z[2], 0,
+      -dot(x,eye), -dot(y,eye), -dot(z,eye), 1
+    ]);
+  },
+  rotationXY(pitch, yaw){
+    // pitch(X軸) と yaw(Y軸) を合成した回転行列を直接組み立てる
+    const cy=Math.cos(yaw), sy=Math.sin(yaw);
+    const cx=Math.cos(pitch), sx=Math.sin(pitch);
+    // Ry * Rx
+    return new Float32Array([
+      cy,      sx*sy,   cx*sy,  0,
+      0,       cx,     -sx,     0,
+      -sy,     sx*cy,   cx*cy,  0,
+      0,       0,       0,      1
+    ]);
+  }
+};
+
+/* ============================================================
+   2. アイコスフィア（正20面体細分割球）の生成
+      + フラクタルノイズによる有機的なデコボコの付与
+      + フェイス法線からの頂点法線の再計算
+      -> 「1個のオブジェクト」の形状データをゼロから作る部分
+   ============================================================ */
+function hash(x, y, z){
+  const s = Math.sin(x*127.1 + y*311.7 + z*74.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+function valueNoise3(x, y, z){
+  const xi=Math.floor(x), yi=Math.floor(y), zi=Math.floor(z);
+  const xf=x-xi, yf=y-yi, zf=z-zi;
+  const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf), w=zf*zf*(3-2*zf);
+  const lerp=(a,b,t)=>a+(b-a)*t;
+  const c000=hash(xi,yi,zi),     c100=hash(xi+1,yi,zi);
+  const c010=hash(xi,yi+1,zi),   c110=hash(xi+1,yi+1,zi);
+  const c001=hash(xi,yi,zi+1),   c101=hash(xi+1,yi,zi+1);
+  const c011=hash(xi,yi+1,zi+1), c111=hash(xi+1,yi+1,zi+1);
+  const x00=lerp(c000,c100,u), x10=lerp(c010,c110,u);
+  const x01=lerp(c001,c101,u), x11=lerp(c011,c111,u);
+  const y0=lerp(x00,x10,v), y1=lerp(x01,x11,v);
+  return lerp(y0,y1,w) * 2 - 1; // -1..1
+}
+function fbm3(x, y, z){
+  let sum=0, amp=0.6, freq=1.0;
+  for(let i=0;i<4;i++){
+    sum += valueNoise3(x*freq, y*freq, z*freq) * amp;
+    freq *= 2.05; amp *= 0.5;
+  }
+  return sum;
+}
+
+function createOrganicIcosphere(subdivisions, bumpAmount){
+  const t = (1 + Math.sqrt(5)) / 2;
+  let verts = [
+    [-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],
+    [0,-1,t],[0,1,t],[0,-1,-t],[0,1,-t],
+    [t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]
+  ].map(v=>{
+    const l=Math.hypot(v[0],v[1],v[2]); return [v[0]/l,v[1]/l,v[2]/l];
+  });
+  let faces = [
+    [0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],
+    [1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],
+    [3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],
+    [4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]
+  ];
+
+  for(let s=0; s<subdivisions; s++){
+    const midCache = new Map();
+    const midpoint = (i1, i2)=>{
+      const key = i1<i2 ? i1+"_"+i2 : i2+"_"+i1;
+      if(midCache.has(key)) return midCache.get(key);
+      const a=verts[i1], b=verts[i2];
+      const m=[(a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2];
+      const l=Math.hypot(m[0],m[1],m[2]);
+      const idx = verts.push([m[0]/l,m[1]/l,m[2]/l]) - 1;
+      midCache.set(key, idx);
+      return idx;
+    };
+    const next = [];
+    for(const [a,b,c] of faces){
+      const ab=midpoint(a,b), bc=midpoint(b,c), ca=midpoint(c,a);
+      next.push([a,ab,ca],[b,bc,ab],[c,ca,bc],[ab,bc,ca]);
+    }
+    faces = next;
+  }
+
+  // 単位球の頂点を、fbm ノイズの分だけ半径方向にずらして有機的な塊に変形
+  const positions = new Float32Array(verts.length * 3);
+  for(let i=0;i<verts.length;i++){
+    const [x,y,z] = verts[i];
+    const n = fbm3(x*1.6, y*1.6, z*1.6);
+    const r = 1.45 + n * bumpAmount;
+    positions[i*3+0] = x*r;
+    positions[i*3+1] = y*r;
+    positions[i*3+2] = z*r;
+  }
+
+  const indexCount = faces.length * 3;
+  const indices = indexCount > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
+  faces.forEach((f, i)=>{ indices[i*3]=f[0]; indices[i*3+1]=f[1]; indices[i*3+2]=f[2]; });
+
+  // 法線はデコボコにした後の実ジオメトリから、面法線を頂点ごとに加算平均して求める
+  // （半径方向の近似ではなく実形状に沿うので、シェーディングの継ぎ目が出にくい）
+  const normals = new Float32Array(verts.length * 3);
+  for(let f=0; f<faces.length; f++){
+    const [ia,ib,ic] = faces[f];
+    const ax=positions[ia*3],ay=positions[ia*3+1],az=positions[ia*3+2];
+    const bx=positions[ib*3],by=positions[ib*3+1],bz=positions[ib*3+2];
+    const cx=positions[ic*3],cy=positions[ic*3+1],cz=positions[ic*3+2];
+    const e1=[bx-ax,by-ay,bz-az], e2=[cx-ax,cy-ay,cz-az];
+    const nx=e1[1]*e2[2]-e1[2]*e2[1];
+    const ny=e1[2]*e2[0]-e1[0]*e2[2];
+    const nz=e1[0]*e2[1]-e1[1]*e2[0];
+    for(const idx of [ia,ib,ic]){
+      normals[idx*3]+=nx; normals[idx*3+1]+=ny; normals[idx*3+2]+=nz;
+    }
+  }
+  for(let i=0;i<verts.length;i++){
+    const l = Math.hypot(normals[i*3],normals[i*3+1],normals[i*3+2]) || 1;
+    normals[i*3]/=l; normals[i*3+1]/=l; normals[i*3+2]/=l;
+  }
+
+  return { positions, normals, indices };
+}
+
+/* ============================================================
+   3. WebGL2 セットアップ
+      擬似メタリック・シェーディング:
+      本物の環境マップ(HDRI)は使わず、反射ベクトルから
+      「上が明るく水平線が暗いスタジオ照明」を手続き的に合成し、
+      フレネル項でリムを縁取ることで“金属っぽさ”を作る近似手法。
+   ============================================================ */
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl2");
+
+const VERT_SRC = `#version 300 es
+layout(location=0) in vec3 aPosition;
+layout(location=1) in vec3 aNormal;
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProj;
+out vec3 vNormal;
+out vec3 vWorldPos;
+void main(){
+  vec4 world = uModel * vec4(aPosition, 1.0);
+  vWorldPos = world.xyz;
+  vNormal = mat3(uModel) * aNormal; // uModel は回転のみなので3x3を直接法線に使える
+  gl_Position = uProj * uView * world;
+}`;
+
+const FRAG_SRC = `#version 300 es
+precision highp float;
+in vec3 vNormal;
+in vec3 vWorldPos;
+uniform vec3 uCameraPos;
+uniform vec3 uAccentA;
+uniform vec3 uAccentB;
+uniform float uMix;
+out vec4 outColor;
+
+// 反射ベクトルだけから「スタジオっぽい」環境色を手続き的に作る簡易IBL近似
+vec3 fakeEnv(vec3 r){
+  float t = clamp(r.y*0.5+0.5, 0.0, 1.0);
+  vec3 top = vec3(0.92,0.95,1.0);
+  vec3 horizon = vec3(0.03,0.035,0.05);
+  vec3 bottom = vec3(0.10,0.09,0.13);
+  vec3 c = mix(horizon, top, smoothstep(0.15,0.85,t));
+  c = mix(c, bottom, smoothstep(0.35,0.0,t));
+  float strip = smoothstep(0.985, 1.0, sin(r.x*10.0 + r.z*6.0)*0.5+0.5);
+  c += strip*0.5;
+  return c;
+}
+
+void main(){
+  vec3 N = normalize(vNormal);
+  vec3 V = normalize(uCameraPos - vWorldPos);
+  vec3 R = reflect(-V, N);
+
+  vec3 env = fakeEnv(R);
+  float fresnel = pow(1.0 - max(dot(N,V), 0.0), 2.5);
+
+  vec3 accent = mix(uAccentA, uAccentB, uMix);
+  vec3 base = mix(env*0.55, accent, 0.35);
+  vec3 color = mix(base, vec3(1.0), fresnel*0.6);
+
+  vec3 L = normalize(vec3(0.4,0.8,0.5));
+  vec3 H = normalize(L+V);
+  float spec = pow(max(dot(N,H), 0.0), 70.0);
+  color += vec3(1.0) * spec;
+
+  outColor = vec4(color, 1.0);
+}`;
+
+function compile(type, src){
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if(!gl.getShaderParameter(sh, gl.COMPILE_STATUS)){
+    console.error(gl.getShaderInfoLog(sh));
+  }
+  return sh;
+}
+const program = gl.createProgram();
+gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT_SRC));
+gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG_SRC));
+gl.linkProgram(program);
+if(!gl.getProgramParameter(program, gl.LINK_STATUS)){
+  console.error(gl.getProgramInfoLog(program));
+}
+
+const mesh = createOrganicIcosphere(3, 0.16);
+
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+
+const posBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0);
+gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+
+const nrmBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, nrmBuf);
+gl.bufferData(gl.ARRAY_BUFFER, mesh.normals, gl.STATIC_DRAW);
+gl.enableVertexAttribArray(1);
+gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+
+const idxBuf = gl.createBuffer();
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
+const indexType = mesh.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT;
+
+gl.enable(gl.DEPTH_TEST);
+gl.enable(gl.CULL_FACE);
+
+const uModel = gl.getUniformLocation(program, "uModel");
+const uView = gl.getUniformLocation(program, "uView");
+const uProj = gl.getUniformLocation(program, "uProj");
+const uCameraPos = gl.getUniformLocation(program, "uCameraPos");
+const uAccentA = gl.getUniformLocation(program, "uAccentA");
+const uAccentB = gl.getUniformLocation(program, "uAccentB");
+const uMix = gl.getUniformLocation(program, "uMix");
+
+function resize(){
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = innerWidth * dpr;
+  canvas.height = innerHeight * dpr;
+}
+addEventListener("resize", resize);
+resize();
+
+/* ============================================================
+   4. マウスの「重さ」= バネ・ダンパー物理で回転を追従させる
+      目標角度に一気に飛びつかず、速度を毎フレーム目標との差分で
+      加速→減衰させることで、実体のある物を回しているような
+      遅れと収束を作る。これが Lusion 系サイトの「効き」の核。
+   ============================================================ */
+let targetYaw = 0, targetPitch = 0;
+let yaw = 0, pitch = 0, yawVel = 0, pitchVel = 0;
+const STIFFNESS = 0.05, DAMPING = 0.88;
+
+addEventListener("pointermove", (e)=>{
+  targetYaw = (e.clientX / innerWidth - 0.5) * Math.PI * 0.7;
+  targetPitch = (e.clientY / innerHeight - 0.5) * Math.PI * 0.35;
+});
+
+/* ============================================================
+   5. スクロール = カメラのZ軸移動 + 章(色)の切り替え
+   ============================================================ */
+let scrollProgress = 0;
+function readScrollProgress(){
+  const max = document.documentElement.scrollHeight - innerHeight;
+  scrollProgress = max > 0 ? Math.min(1, Math.max(0, scrollY / max)) : 0;
+}
+addEventListener("scroll", readScrollProgress, { passive:true });
+readScrollProgress();
+
+const panels = [...document.querySelectorAll(".panel[data-range]")];
+function updatePanels(){
+  for(const el of panels){
+    const [start, end] = el.dataset.range.split(",").map(Number);
+    const visible = scrollProgress >= start && scrollProgress <= end;
+    el.classList.toggle("is-visible", visible);
+  }
+  document.getElementById("progressFill").style.height = (scrollProgress*100).toFixed(1) + "%";
+}
+
+const ACCENT_A = [0.28, 0.35, 0.95]; // インディゴ
+const ACCENT_B = [0.95, 0.35, 0.72]; // マゼンタ寄り
+
+function render(){
+  requestAnimationFrame(render);
+
+  // --- 回転の物理更新 ---
+  yawVel += (targetYaw - yaw) * STIFFNESS;
+  yawVel *= DAMPING;
+  yaw += yawVel + 0.0022; // 常時ゆっくり自転する分を上乗せ
+
+  pitchVel += (targetPitch - pitch) * STIFFNESS;
+  pitchVel *= DAMPING;
+  pitch += pitchVel;
+
+  updatePanels();
+
+  // --- スクロール進捗からカメラのZ位置と色を決める ---
+  const camZ = 6.2 - scrollProgress * 4.4; // 奥へドリー
+  const eye = [0, 0, camZ];
+  const view = mat4.lookAt(eye, [0,0,0], [0,1,0]);
+  const proj = mat4.perspective(Math.PI/4, innerWidth/innerHeight, 0.1, 50);
+  const model = mat4.rotationXY(pitch, yaw);
+
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  const bg = 0.02 + scrollProgress*0.01;
+  gl.clearColor(bg*0.9, bg, bg*1.15, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  gl.useProgram(program);
+  gl.uniformMatrix4fv(uModel, false, model);
+  gl.uniformMatrix4fv(uView, false, view);
+  gl.uniformMatrix4fv(uProj, false, proj);
+  gl.uniform3fv(uCameraPos, eye);
+  gl.uniform3fv(uAccentA, ACCENT_A);
+  gl.uniform3fv(uAccentB, ACCENT_B);
+  gl.uniform1f(uMix, scrollProgress);
+
+  gl.bindVertexArray(vao);
+  gl.drawElements(gl.TRIANGLES, mesh.indices.length, indexType, 0);
+}
+requestAnimationFrame(render);
+
+/* ============================================================
+   6. 独自カーソル + マグネティック要素
+      再利用しやすいように独立した関数にしてある。
+      使い方: ボタンやリンクに data-magnetic 属性を付けるだけ。
+   ============================================================ */
+function initCustomCursor(){
+  const cursor = document.getElementById("cursor");
+  let cx=innerWidth/2, cy=innerHeight/2, tx=cx, ty=cy;
+  addEventListener("pointermove", (e)=>{ tx=e.clientX; ty=e.clientY; });
+  document.querySelectorAll("a, button, [data-magnetic]").forEach(el=>{
+    el.addEventListener("mouseenter", ()=>cursor.classList.add("is-hover"));
+    el.addEventListener("mouseleave", ()=>cursor.classList.remove("is-hover"));
+  });
+  (function loop(){
+    cx += (tx-cx)*0.18; cy += (ty-cy)*0.18;
+    cursor.style.transform = `translate(${cx}px, ${cy}px)`;
+    requestAnimationFrame(loop);
+  })();
+}
+
+function initMagnetic(selector, strength=0.4, radius=90){
+  document.querySelectorAll(selector).forEach(el=>{
+    let tx=0, ty=0, cx=0, cy=0;
+    el.addEventListener("mousemove", (e)=>{
+      const r = el.getBoundingClientRect();
+      const dx = e.clientX - (r.left + r.width/2);
+      const dy = e.clientY - (r.top + r.height/2);
+      const dist = Math.hypot(dx,dy);
+      if(dist < radius){ tx = dx*strength; ty = dy*strength; }
+    });
+    el.addEventListener("mouseleave", ()=>{ tx=0; ty=0; });
+    (function loop(){
+      cx += (tx-cx)*0.2; cy += (ty-cy)*0.2;
+      el.style.transform = `translate(${cx.toFixed(2)}px, ${cy.toFixed(2)}px)`;
+      requestAnimationFrame(loop);
+    })();
+  });
+}
+
+initCustomCursor();
+initMagnetic("[data-magnetic]");
+</script>
+</body>
+</html>
