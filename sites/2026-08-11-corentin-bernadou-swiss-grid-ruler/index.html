@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swiss Grid Ruler Demo — Corentin Bernadou 風 表現デモ</title>
+<style>
+  :root{
+    --ink:#111111;
+    --paper:#f5f3ef;
+    --accent:#e8551f;
+    --line: rgba(17,17,17,0.14);
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    --col-count: 12;
+    --gutter: 20px;
+    --margin: 32px;
+    --baseline: 28px;
+  }
+
+  *{ box-sizing:border-box; }
+
+  html,body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---------- レイアウト用グリッド ---------- */
+  .frame{
+    max-width:1400px;
+    margin:0 auto;
+    padding:0 var(--margin);
+  }
+
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(var(--col-count), 1fr);
+    gap:var(--gutter);
+  }
+
+  header.top{
+    padding:calc(var(--baseline)*2) 0 var(--baseline);
+    border-bottom:1px solid var(--line);
+  }
+
+  .wordmark{
+    grid-column:1 / span 8;
+    font-size:clamp(48px, 9vw, 128px);
+    line-height:0.9;
+    letter-spacing:-0.02em;
+    margin:0;
+    font-weight:700;
+  }
+  .wordmark span{ color:var(--accent); }
+
+  .meta-col{
+    grid-column:9 / span 4;
+    display:flex;
+    flex-direction:column;
+    justify-content:flex-end;
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:0.02em;
+    line-height:1.7;
+    text-transform:uppercase;
+  }
+
+  .toolbar{
+    grid-column:1 / -1;
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    margin-top:var(--baseline);
+  }
+
+  button.tool{
+    font-family:var(--mono);
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    background:transparent;
+    color:var(--ink);
+    border:1px solid var(--ink);
+    padding:8px 14px;
+    cursor:pointer;
+    transition:background .15s, color .15s;
+  }
+  button.tool:hover{ background:var(--ink); color:var(--paper); }
+  button.tool.is-active{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.tool kbd{
+    font-family:inherit;
+    opacity:0.6;
+    margin-left:6px;
+  }
+
+  /* ---------- プロジェクト一覧 ---------- */
+  section.work{ padding:calc(var(--baseline)*2) 0; }
+
+  .work h2{
+    grid-column:1 / -1;
+    font-family:var(--mono);
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:#555;
+    margin:0 0 var(--baseline) 0;
+    padding-bottom:8px;
+    border-bottom:1px solid var(--line);
+  }
+
+  .card{
+    grid-column:span 4;
+    border-top:1px solid var(--ink);
+    padding-top:14px;
+    padding-bottom:40px;
+  }
+  @media (max-width:900px){ .card{ grid-column:span 6; } }
+  @media (max-width:560px){ .card{ grid-column:span 12; } }
+
+  .card .thumb{
+    aspect-ratio:4/3;
+    background:#e2ddd2;
+    margin-bottom:14px;
+    position:relative;
+    overflow:hidden;
+  }
+
+  .card h3{
+    margin:0 0 4px 0;
+    font-size:18px;
+    font-weight:600;
+  }
+  .card p{
+    margin:0;
+    font-family:var(--mono);
+    font-size:11px;
+    color:#666;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+  }
+
+  canvas#wire{ width:100%; height:100%; display:block; }
+
+  footer.foot{
+    grid-column:1 / -1;
+    border-top:1px solid var(--line);
+    padding:var(--baseline) 0;
+    font-family:var(--mono);
+    font-size:11px;
+    color:#777;
+    display:flex;
+    justify-content:space-between;
+  }
+
+  /* ================================================================
+     1) レイアウトグリッド・オーバーレイ
+     「option + G」でトグルする、印刷物のグリッドシステムを可視化する層。
+     ================================================================ */
+  #grid-overlay{
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    z-index:9000;
+    display:none;
+  }
+  #grid-overlay.is-visible{ display:block; }
+
+  #grid-overlay .cols{
+    position:absolute;
+    inset:0;
+    max-width:1400px;
+    margin:0 auto;
+    padding:0 var(--margin);
+    display:grid;
+    grid-template-columns:repeat(var(--col-count), 1fr);
+    gap:var(--gutter);
+  }
+  #grid-overlay .cols i{
+    background:rgba(232,85,31,0.08);
+    border-left:1px solid rgba(232,85,31,0.5);
+    border-right:1px solid rgba(232,85,31,0.5);
+  }
+  #grid-overlay .baselines{
+    position:absolute;
+    inset:0;
+    background-image:repeating-linear-gradient(
+      to bottom,
+      rgba(17,17,17,0.08) 0,
+      rgba(17,17,17,0.08) 1px,
+      transparent 1px,
+      transparent var(--baseline)
+    );
+  }
+
+  /* ================================================================
+     2) Figma風の計測(ルーラー)ツール
+     ================================================================ */
+  body.measure-mode [data-measure]{ cursor: crosshair; }
+
+  #measure-box{
+    position:fixed;
+    z-index:9500;
+    border:1px solid var(--accent);
+    background:rgba(232,85,31,0.08);
+    pointer-events:none;
+    display:none;
+  }
+  #measure-box .dim{
+    position:absolute;
+    bottom:100%;
+    left:0;
+    transform:translateY(-4px);
+    background:var(--accent);
+    color:#fff;
+    font-family:var(--mono);
+    font-size:11px;
+    padding:2px 6px;
+    white-space:nowrap;
+  }
+  #measure-box .guide{
+    position:fixed;
+    background:var(--accent);
+    opacity:0.5;
+  }
+  #measure-box .guide.v{ width:1px; top:0; bottom:0; }
+  #measure-box .guide.h{ height:1px; left:0; right:0; }
+
+  .marker{
+    position:fixed;
+    z-index:9400;
+    pointer-events:auto;
+    cursor:pointer;
+  }
+  .marker .dot{
+    position:absolute;
+    width:8px; height:8px;
+    background:var(--accent);
+    border-radius:50%;
+    transform:translate(-50%,-50%);
+  }
+  .marker .line-v{
+    position:absolute;
+    width:1px; top:-4000px; bottom:-4000px;
+    left:0;
+    background:repeating-linear-gradient(to bottom, var(--accent) 0 4px, transparent 4px 8px);
+  }
+  .marker .line-h{
+    position:absolute;
+    height:1px; left:-4000px; right:-4000px;
+    top:0;
+    background:repeating-linear-gradient(to right, var(--accent) 0 4px, transparent 4px 8px);
+  }
+  .marker .label{
+    position:absolute;
+    left:10px; top:-22px;
+    font-family:var(--mono);
+    font-size:10px;
+    background:var(--ink);
+    color:#fff;
+    padding:2px 5px;
+    white-space:nowrap;
+  }
+
+  .hint{
+    position:fixed;
+    right:20px;
+    bottom:20px;
+    z-index:9600;
+    font-family:var(--mono);
+    font-size:11px;
+    background:var(--ink);
+    color:var(--paper);
+    padding:10px 14px;
+    max-width:260px;
+    line-height:1.6;
+    display:none;
+  }
+  .hint.is-visible{ display:block; }
+</style>
+</head>
+<body>
+
+<div class="frame">
+
+  <header class="top grid">
+    <h1 class="wordmark">Corentin<br><span>Studio</span></h1>
+    <div class="meta-col">
+      <div>Freelance Developer</div>
+      <div>Swiss Grid × WebGL Study</div>
+      <div>Learning Demo — 2026</div>
+    </div>
+    <div class="toolbar">
+      <button class="tool" id="btn-grid" type="button">グリッド表示 <kbd>G</kbd></button>
+      <button class="tool" id="btn-measure" type="button">定規モード <kbd>R</kbd></button>
+      <button class="tool" id="btn-clear" type="button">マーカー消去</button>
+    </div>
+  </header>
+
+  <section class="work grid">
+    <h2>Selected Work</h2>
+
+    <article class="card" data-measure>
+      <div class="thumb"><canvas id="wire"></canvas></div>
+      <h3>Wireframe Study</h3>
+      <p>Canvas / Vanilla 3D</p>
+    </article>
+
+    <article class="card" data-measure>
+      <div class="thumb" style="background:#d8ccb8"></div>
+      <h3>Editorial Grid</h3>
+      <p>HTML / CSS Grid</p>
+    </article>
+
+    <article class="card" data-measure>
+      <div class="thumb" style="background:#c9d6cf"></div>
+      <h3>Measure Tool</h3>
+      <p>JS / getBoundingClientRect</p>
+    </article>
+
+  </section>
+
+  <footer class="foot">
+    <span>Study Demo</span>
+    <span>Not affiliated with corentinbernadou.com</span>
+  </footer>
+
+</div>
+
+<!-- グリッドオーバーレイ本体 -->
+<div id="grid-overlay">
+  <div class="baselines"></div>
+  <div class="cols">
+    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+  </div>
+</div>
+
+<!-- 計測ツールのハイライト枠(1つだけ使い回す) -->
+<div id="measure-box"><div class="dim"></div></div>
+
+<div class="hint" id="hint">定規モード中: カードにカーソルを合わせるとサイズを計測、空いている場所をクリックすると測定用のマーカーを置けます。マーカーは再クリックで削除できます。</div>
+
+<script>
+/*
+ * ============================================================
+ * 1) initGridOverlay(overlayEl, toggleBtn, keyName)
+ * ------------------------------------------------------------
+ * 印刷物のような列(カラム)グリッドとベースライン(行送り)を
+ * 画面全体に重ねて表示/非表示するだけのシンプルな関数。
+ * CSS変数 --col-count / --gutter / --margin / --baseline を
+ * ページ本体と共有しているため、実際のレイアウトと完全に一致する。
+ *
+ * 使い方: 好きなボタン要素とキー名を渡すだけで動く。
+ *   initGridOverlay(document.getElementById('grid-overlay'), btn, 'g');
+ * ============================================================
+ */
+function initGridOverlay(overlayEl, toggleBtn, keyName) {
+  function toggle() {
+    overlayEl.classList.toggle('is-visible');
+    toggleBtn.classList.toggle('is-active', overlayEl.classList.contains('is-visible'));
+  }
+  toggleBtn.addEventListener('click', toggle);
+  window.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === keyName && !e.metaKey && !e.ctrlKey) toggle();
+  });
+  return { toggle };
+}
+
+/*
+ * ============================================================
+ * 2) initMeasureTool(options)
+ * ------------------------------------------------------------
+ * Figmaの「option長押しで要素サイズが出る」感覚を、
+ * getBoundingClientRect() だけで再現するツール。
+ *
+ * - measure-mode 中に data-measure 属性を持つ要素へマウスを乗せると、
+ *   その要素のちょうど外側に破線枠と "幅 x 高さ" ラベルを表示する。
+ * - 対象要素の外(空いている場所)でクリックすると、その座標に
+ *   十字ガイド(上下左右いっぱいに伸びる点線)とラベルを持つ
+ *   「マーカー」を設置する。マーカー自身をクリックすると削除される。
+ *
+ * 使い方:
+ *   const measure = initMeasureTool({
+ *     toggleBtn: document.getElementById('btn-measure'),
+ *     clearBtn:  document.getElementById('btn-clear'),
+ *     boxEl:     document.getElementById('measure-box'),
+ *     hintEl:    document.getElementById('hint'),
+ *     key: 'r',
+ *   });
+ * ============================================================
+ */
+function initMeasureTool(options) {
+  const { toggleBtn, clearBtn, boxEl, hintEl, key } = options;
+  const dimLabel = boxEl.querySelector('.dim');
+  let active = false;
+  const markers = [];
+
+  function setActive(next) {
+    active = next;
+    document.body.classList.toggle('measure-mode', active);
+    toggleBtn.classList.toggle('is-active', active);
+    hintEl.classList.toggle('is-visible', active);
+    if (!active) boxEl.style.display = 'none';
+  }
+
+  function highlight(el) {
+    const r = el.getBoundingClientRect();
+    boxEl.style.display = 'block';
+    boxEl.style.left = r.left + 'px';
+    boxEl.style.top = r.top + 'px';
+    boxEl.style.width = r.width + 'px';
+    boxEl.style.height = r.height + 'px';
+    dimLabel.textContent = Math.round(r.width) + ' × ' + Math.round(r.height) + ' px';
+  }
+
+  function addMarker(x, y) {
+    const el = document.createElement('div');
+    el.className = 'marker';
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    el.innerHTML =
+      '<div class="line-v"></div>' +
+      '<div class="line-h"></div>' +
+      '<div class="dot"></div>' +
+      '<div class="label">' + Math.round(x) + ', ' + Math.round(y) + '</div>';
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      el.remove();
+      const i = markers.indexOf(el);
+      if (i > -1) markers.splice(i, 1);
+    });
+    document.body.appendChild(el);
+    markers.push(el);
+  }
+
+  function clearMarkers() {
+    markers.splice(0).forEach((m) => m.remove());
+  }
+
+  toggleBtn.addEventListener('click', () => setActive(!active));
+  window.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === key && !e.metaKey && !e.ctrlKey) setActive(!active);
+  });
+  clearBtn.addEventListener('click', clearMarkers);
+
+  document.addEventListener('mouseover', (e) => {
+    if (!active) return;
+    const target = e.target.closest('[data-measure]');
+    if (target) highlight(target);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!active) return;
+    const onMeasurable = e.target.closest('[data-measure]');
+    const onMarker = e.target.closest('.marker');
+    if (!onMeasurable && !onMarker) addMarker(e.clientX, e.clientY);
+  });
+
+  return { setActive, clearMarkers };
+}
+
+/*
+ * ============================================================
+ * 3) initWireframeCanvas(canvas)
+ * ------------------------------------------------------------
+ * Three.js等の3Dライブラリを使わず、素の2D Canvasだけで
+ * 「回転するワイヤーフレーム(正20面体もどき)」を描く軽量デモ。
+ * 頂点を手動で回転行列(Y軸・X軸)にかけ、遠近感を単純な
+ * 透視除算(z値で割る)だけで作っている。
+ *
+ * 使い方:
+ *   initWireframeCanvas(document.getElementById('wire'));
+ * ============================================================
+ */
+function initWireframeCanvas(canvas) {
+  const ctx = canvas.getContext('2d');
+  let w, h, dpr;
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    w = canvas.clientWidth;
+    h = canvas.clientHeight;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // 正20面体の頂点(黄金比ベース)
+  const t = (1 + Math.sqrt(5)) / 2;
+  const raw = [
+    [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+    [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+    [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1],
+  ];
+  const edges = [];
+  for (let i = 0; i < raw.length; i++) {
+    for (let j = i + 1; j < raw.length; j++) {
+      const dx = raw[i][0] - raw[j][0];
+      const dy = raw[i][1] - raw[j][1];
+      const dz = raw[i][2] - raw[j][2];
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d < 2.1) edges.push([i, j]);
+    }
+  }
+
+  let angleX = 0.4;
+  let angleY = 0;
+
+  function rotate([x, y, z], ax, ay) {
+    // Y軸回転
+    let cosA = Math.cos(ay), sinA = Math.sin(ay);
+    let x1 = x * cosA + z * sinA;
+    let z1 = -x * sinA + z * cosA;
+    // X軸回転
+    let cosB = Math.cos(ax), sinB = Math.sin(ax);
+    let y1 = y * cosB - z1 * sinB;
+    let z2 = y * sinB + z1 * cosB;
+    return [x1, y1, z2];
+  }
+
+  function project([x, y, z], scale, dist) {
+    const f = dist / (dist - z);
+    return [x * f * scale, y * f * scale];
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h / 2;
+    const scale = Math.min(w, h) * 0.16;
+    const pts = raw.map((p) => project(rotate(p, angleX, angleY), scale, 5));
+
+    ctx.strokeStyle = '#e8551f';
+    ctx.lineWidth = 1;
+    edges.forEach(([a, b]) => {
+      ctx.beginPath();
+      ctx.moveTo(cx + pts[a][0], cy + pts[a][1]);
+      ctx.lineTo(cx + pts[b][0], cy + pts[b][1]);
+      ctx.stroke();
+    });
+
+    angleY += 0.006;
+    angleX += 0.0016;
+    requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+/* ------------------------------------------------------------ */
+/* 上記3つの関数を、このページの実際の要素に対して初期化する。 */
+/* ------------------------------------------------------------ */
+initGridOverlay(
+  document.getElementById('grid-overlay'),
+  document.getElementById('btn-grid'),
+  'g'
+);
+
+initMeasureTool({
+  toggleBtn: document.getElementById('btn-measure'),
+  clearBtn: document.getElementById('btn-clear'),
+  boxEl: document.getElementById('measure-box'),
+  hintEl: document.getElementById('hint'),
+  key: 'r',
+});
+
+initWireframeCanvas(document.getElementById('wire'));
+</script>
+
+</body>
+</html>
