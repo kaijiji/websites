@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>再現デモ: 慣性スムーススクロール + WebGLリップル画像 + マグネティックカーソル</title>
+<style>
+  :root {
+    --bg: #f4f3ef;
+    --ink: #17181a;
+    --dim: #6b6d72;
+    --line: rgba(23, 24, 26, 0.14);
+    --accent: #ff5a36;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", "Segoe UI", sans-serif;
+    /* Locomotive Scrollと同じ「ブラウザの実スクロールは隠して自前でtranslateする」方式なので
+       ネイティブスクロールバーは出さず、overflowだけhiddenにする */
+    overflow-x: hidden;
+    cursor: none;
+  }
+  a { color: inherit; }
+
+  /* ============ カスタムカーソル ============ */
+  .cursor {
+    position: fixed;
+    top: 0; left: 0;
+    width: 10px; height: 10px;
+    margin: -5px 0 0 -5px;
+    border-radius: 50%;
+    background: var(--ink);
+    pointer-events: none;
+    z-index: 9999;
+    transform: translate3d(-100px, -100px, 0);
+    transition: width .25s ease, height .25s ease, margin .25s ease, background .25s ease;
+  }
+  .cursor-ring {
+    position: fixed;
+    top: 0; left: 0;
+    width: 44px; height: 44px;
+    margin: -22px 0 0 -22px;
+    border-radius: 50%;
+    border: 1px solid var(--ink);
+    pointer-events: none;
+    z-index: 9998;
+    transform: translate3d(-100px, -100px, 0);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    letter-spacing: .04em;
+    opacity: 0;
+    transition: width .3s cubic-bezier(.2,.8,.2,1), height .3s cubic-bezier(.2,.8,.2,1),
+                margin .3s cubic-bezier(.2,.8,.2,1), opacity .2s ease, background .3s ease, border-color .3s ease;
+  }
+  .cursor-ring.is-active {
+    width: 88px; height: 88px;
+    margin: -44px 0 0 -44px;
+    background: var(--ink);
+    color: var(--bg);
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .cursor, .cursor-ring { display: none; }
+    html, body { cursor: auto; }
+  }
+
+  /* ============ 慣性スクロールの土台 ============
+     本物のページ高さを持つ透明なspacerでブラウザの実スクロール量を作り、
+     見た目上のコンテンツは position:fixed で常に画面上に置いて
+     JSからtransform: translateYで動かす。これがLocomotive Scroll系の
+     ライブラリが使っている代表的な手法。 */
+  #scroll-spacer {
+    width: 1px;
+  }
+  #scroll-content {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%;
+    will-change: transform;
+  }
+
+  section {
+    position: relative;
+    padding: 0 6vw;
+  }
+
+  /* ---- nav ---- */
+  nav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 500;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 22px 6vw;
+    font-size: 13px;
+    letter-spacing: .06em;
+    mix-blend-mode: difference;
+    color: #fff;
+  }
+  nav .logo { font-weight: 700; }
+  nav ul { list-style: none; display: flex; gap: 28px; margin: 0; padding: 0; }
+
+  /* ---- hero ---- */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .hero h1 {
+    font-size: clamp(48px, 11vw, 168px);
+    line-height: .88;
+    margin: 0;
+    letter-spacing: -.02em;
+    font-weight: 700;
+  }
+  .hero .row { overflow: hidden; }
+  .hero .sub {
+    max-width: 480px;
+    margin-top: 28px;
+    color: var(--dim);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  .hero-bg-word {
+    position: absolute;
+    right: 4vw;
+    bottom: 6vh;
+    font-size: 13px;
+    color: var(--dim);
+    letter-spacing: .08em;
+  }
+
+  /* ---- reveal (text) ---- */
+  [data-reveal] { overflow: hidden; }
+  [data-reveal] .reveal-inner {
+    display: inline-block;
+    transform: translateY(110%);
+    transition: transform 1s cubic-bezier(.19,1,.22,1);
+  }
+  [data-reveal].is-inview .reveal-inner { transform: translateY(0); }
+
+  /* ---- section headings ---- */
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding-top: 140px;
+    padding-bottom: 40px;
+    border-bottom: 1px solid var(--line);
+  }
+  .section-head h2 {
+    font-size: clamp(28px, 4vw, 46px);
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: -.01em;
+  }
+  .section-head .index { color: var(--dim); font-size: 13px; }
+
+  /* ---- project grid ---- */
+  .work-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 2px;
+    padding: 2px 0 160px;
+  }
+  @media (max-width: 760px) {
+    .work-grid { grid-template-columns: 1fr; }
+  }
+  .work-card {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    background: #111;
+    overflow: hidden;
+  }
+  .work-card canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .work-meta {
+    position: absolute;
+    left: 20px;
+    bottom: 18px;
+    color: #fff;
+    z-index: 2;
+    pointer-events: none;
+    text-shadow: 0 1px 12px rgba(0,0,0,.35);
+  }
+  .work-meta .n { font-size: 12px; opacity: .8; }
+  .work-meta .t { font-size: 22px; font-weight: 700; margin-top: 2px; }
+  .work-meta .c { font-size: 12px; opacity: .8; margin-top: 6px; }
+
+  /* ---- parallax marquee ---- */
+  .marquee-wrap {
+    padding: 120px 0;
+    overflow: hidden;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .marquee {
+    display: flex;
+    white-space: nowrap;
+    font-size: clamp(40px, 9vw, 130px);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    color: transparent;
+    -webkit-text-stroke: 1px var(--ink);
+  }
+  .marquee span { padding-right: 48px; }
+
+  /* ---- footer ---- */
+  footer {
+    padding: 140px 6vw 80px;
+    display: flex;
+    justify-content: space-between;
+    gap: 40px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--dim);
+  }
+  footer .big {
+    font-size: clamp(26px, 4vw, 42px);
+    color: var(--ink);
+    font-weight: 700;
+    max-width: 640px;
+    line-height: 1.3;
+  }
+
+  .note {
+    position: fixed;
+    left: 6vw;
+    bottom: 18px;
+    z-index: 500;
+    font-size: 11px;
+    color: var(--dim);
+    letter-spacing: .03em;
+  }
+</style>
+</head>
+<body>
+
+<div class="cursor" id="cursorDot"></div>
+<div class="cursor-ring" id="cursorRing"><span id="cursorLabel"></span></div>
+
+<nav>
+  <div class="logo">LOCO/STUDIO&reg;</div>
+  <ul>
+    <li>Work</li>
+    <li>Studio</li>
+    <li>Contact</li>
+  </ul>
+</nav>
+
+<!-- 実スクロール量を生むための透明なダミー要素。JSで見た目コンテンツの高さに合わせて伸縮させる -->
+<div id="scroll-spacer"></div>
+
+<div id="scroll-content">
+
+  <section class="hero">
+    <div class="row"><h1 data-speed="0.1">Feelings,</h1></div>
+    <div class="row"><h1 data-speed="0.1">Not Features.</h1></div>
+    <p class="sub" data-reveal><span class="reveal-inner">スクロールに慣性(イナーシャ)を持たせ、写真にカーソルで触れると水面のように歪む —
+      そんな「手触りのあるWeb体験」を作るスタジオの表現技法を学習用に再現したデモです。</span></p>
+    <div class="hero-bg-word" data-speed="-0.15">SCROLL ↓</div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2 data-reveal><span class="reveal-inner">Selected Work</span></h2>
+      <div class="index">(01 — 04)</div>
+    </div>
+    <div class="work-grid" id="workGrid"></div>
+  </section>
+
+  <section class="marquee-wrap">
+    <div class="marquee" id="marquee" data-speed="0.25">
+      <span>SMOOTH SCROLL</span><span>IMAGE DISTORTION</span><span>MAGNETIC CURSOR</span>
+      <span>SMOOTH SCROLL</span><span>IMAGE DISTORTION</span><span>MAGNETIC CURSOR</span>
+    </div>
+  </section>
+
+  <footer>
+    <div class="big" data-reveal><span class="reveal-inner">この再現デモは特定サイトのコード転載ではなく、観察した表現技法を独自実装したものです。</span></div>
+    <div>
+      <p>Reproduction demo<br/>for educational use</p>
+    </div>
+  </footer>
+
+</div>
+
+<div class="note">Reproduction demo — original code, not the source of the referenced site</div>
+
+<script>
+"use strict";
+
+/* =========================================================================
+ * 1. 慣性スムーススクロール（Locomotive Scroll / Lenis 系ライブラリの仕組み）
+ * -------------------------------------------------------------------------
+ * ブラウザの本物のスクロール量(window.scrollY)を「目標値」として扱い、
+ * 実際に画面へ反映する「現在値」をrequestAnimationFrameで少しずつ
+ * 目標値へ近づける(lerp = 線形補間)。これにより、指を離した後も
+ * すっと減速しながら止まる慣性のある動きになる。
+ *
+ *   current += (target - current) * ease   // ease は 0〜1、小さいほど重く滑らか
+ *
+ * 見た目のコンテンツは position:fixed で画面に固定し、
+ * transform: translateY(-current) で動かす。実スクロール量は
+ * 高さだけを持つ透明な #scroll-spacer が生み出している。
+ * ======================================================================= */
+class SmoothScroll {
+  constructor(contentEl, spacerEl, { ease = 0.085 } = {}) {
+    this.content = contentEl;
+    this.spacer = spacerEl;
+    this.ease = ease;
+    this.current = 0;
+    this.target = 0;
+    this.parallaxEls = Array.from(document.querySelectorAll("[data-speed]"));
+    this.resize();
+    window.addEventListener("resize", () => this.resize());
+    window.addEventListener("scroll", () => { this.target = window.scrollY; }, { passive: true });
+    this.raf = this.raf.bind(this);
+    requestAnimationFrame(this.raf);
+  }
+
+  resize() {
+    // 見た目コンテンツの実際の高さぶんだけ、spacerにも高さを持たせて
+    // ブラウザにスクロールバー/スクロール可能量を作らせる
+    this.spacer.style.height = this.content.getBoundingClientRect().height + "px";
+  }
+
+  raf() {
+    this.current += (this.target - this.current) * this.ease;
+    if (Math.abs(this.target - this.current) < 0.05) this.current = this.target;
+
+    this.content.style.transform = `translate3d(0, ${-this.current}px, 0)`;
+
+    // data-speed を持つ要素に、画面中央からのズレに応じてパララックスをかける。
+    // speedが正なら遅れて動く(奥)、負なら先行して動く(手前)ように見える。
+    const vh = window.innerHeight;
+    for (const el of this.parallaxEls) {
+      const speed = parseFloat(el.dataset.speed || "0");
+      const rect = el.getBoundingClientRect();
+      const distFromCenter = rect.top + rect.height / 2 - vh / 2;
+      el.style.transform = `translate3d(0, ${distFromCenter * -speed}px, 0)`;
+    }
+
+    requestAnimationFrame(this.raf);
+  }
+
+  getScrollY() { return this.current; }
+}
+
+const scrollContent = document.getElementById("scroll-content");
+const scrollSpacer = document.getElementById("scroll-spacer");
+const smoothScroll = new SmoothScroll(scrollContent, scrollSpacer, { ease: 0.085 });
+
+/* =========================================================================
+ * 2. IntersectionObserver によるテキストのリベール表示
+ * ======================================================================= */
+const revealObserver = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (entry.isIntersecting) entry.target.classList.add("is-inview");
+  }
+}, { threshold: 0.2 });
+document.querySelectorAll("[data-reveal]").forEach((el) => revealObserver.observe(el));
+
+/* =========================================================================
+ * 3. マグネティック・カスタムカーソル
+ * ------------------------------------------------------------------------
+ * ドット(小さい点)は即座に、リング(大きい輪)は遅れてlerpで追従させる
+ * ことで「重さ」の違う2層のカーソルを表現する。
+ * data-cursor 属性を持つ要素にホバーすると、リングが拡大してラベルを表示する。
+ * ======================================================================= */
+const cursorDot = document.getElementById("cursorDot");
+const cursorRing = document.getElementById("cursorRing");
+const cursorLabel = document.getElementById("cursorLabel");
+
+const mouse = { x: -100, y: -100 };
+const ring = { x: -100, y: -100 };
+window.addEventListener("mousemove", (e) => {
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+  cursorDot.style.transform = `translate3d(${mouse.x}px, ${mouse.y}px, 0)`;
+});
+
+function tickCursor() {
+  ring.x += (mouse.x - ring.x) * 0.16;
+  ring.y += (mouse.y - ring.y) * 0.16;
+  cursorRing.style.transform = `translate3d(${ring.x}px, ${ring.y}px, 0)`;
+  requestAnimationFrame(tickCursor);
+}
+tickCursor();
+
+// data-cursor を持つ要素(動的に追加されるものも含む)にホバー演出を仕込む共通関数。
+// ワークカードはこの後で動的生成されるため、生成時にも同じ関数を呼び出す。
+function bindMagneticCursor(el) {
+  el.addEventListener("mouseenter", () => {
+    cursorRing.classList.add("is-active");
+    cursorLabel.textContent = el.dataset.cursor;
+  });
+  el.addEventListener("mouseleave", () => {
+    cursorRing.classList.remove("is-active");
+    cursorLabel.textContent = "";
+  });
+}
+document.querySelectorAll("[data-cursor]").forEach(bindMagneticCursor);
+
+/* =========================================================================
+ * 4. WebGLによるマウス追従リップル(水面歪み)画像エフェクト
+ * ------------------------------------------------------------------------
+ * サムネイル1枚につきcanvasを1つ用意し、生WebGL(ライブラリ不使用)で
+ * 画面いっぱいの四角形(quad)にテクスチャを貼る。フラグメントシェーダー内で、
+ * マウス位置(UV座標)を中心とした同心円状の波(sin)でUVサンプリング位置を
+ * ずらすことで、水面に触れたような歪みを作る。歪みの強さ uStrength は
+ * マウスが乗っている間だけ 0→1 にアニメーションさせ、離れると 1→0 に戻す。
+ *
+ * 著作権対策: 使用する「写真」はすべて Canvas2D でその場生成した
+ * オリジナルのグラデーション+図形イラストで、外部画像は一切使用しない。
+ * ======================================================================= */
+const VERT_SRC = `
+  attribute vec2 aPos;
+  varying vec2 vUv;
+  void main() {
+    vUv = aPos * 0.5 + 0.5;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+  }
+`;
+const FRAG_SRC = `
+  precision mediump float;
+  varying vec2 vUv;
+  uniform sampler2D uTex;
+  uniform vec2 uMouse;      // 0..1, 画面下基準に合わせてYは反転済み
+  uniform float uStrength;  // 0..1 ホバー強度
+  uniform float uTime;
+
+  void main() {
+    vec2 uv = vUv;
+    float dist = distance(uv, uMouse);
+
+    // マウス位置を中心にした波紋。距離が離れるほど減衰させる。
+    float ripple = sin(dist * 40.0 - uTime * 6.0) * 0.5 + 0.5;
+    float falloff = smoothstep(0.35, 0.0, dist);
+    vec2 dir = normalize(uv - uMouse + 1e-5);
+
+    vec2 distortedUv = uv + dir * ripple * falloff * 0.06 * uStrength;
+
+    vec3 color = texture2D(uTex, distortedUv).rgb;
+
+    // ホバー中は歪みに合わせてほんの少し明るくして「濡れた」質感を強調
+    color += falloff * uStrength * 0.08;
+
+    gl_FragColor = vec4(color, 1.0);
+  }
+`;
+
+function compileShader(gl, type, src) {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(sh));
+  }
+  return sh;
+}
+
+function createProgram(gl) {
+  const vs = compileShader(gl, gl.VERTEX_SHADER, VERT_SRC);
+  const fs = compileShader(gl, gl.FRAGMENT_SHADER, FRAG_SRC);
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  return program;
+}
+
+// Canvas2Dでオリジナルの「写真」テクスチャをその場生成する
+function paintPlaceholderPhoto(size, hue) {
+  const c = document.createElement("canvas");
+  c.width = size; c.height = size;
+  const ctx = c.getContext("2d");
+
+  const g = ctx.createLinearGradient(0, 0, size, size);
+  g.addColorStop(0, `hsl(${hue}, 40%, 18%)`);
+  g.addColorStop(1, `hsl(${hue + 40}, 55%, 34%)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+
+  // 抽象的な図形をいくつか重ねて「作品写真らしさ」を出す(実写真は使わない)
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath();
+    const r = size * (0.08 + Math.random() * 0.22);
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    ctx.fillStyle = `hsla(${hue + i * 25}, 70%, 70%, ${0.12 + Math.random() * 0.18})`;
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = "rgba(255,255,255,0.25)";
+  ctx.lineWidth = size * 0.004;
+  for (let i = 0; i < 6; i++) {
+    ctx.beginPath();
+    ctx.moveTo(Math.random() * size, 0);
+    ctx.lineTo(Math.random() * size, size);
+    ctx.stroke();
+  }
+
+  return c;
+}
+
+function initRippleCanvas(canvas, hue) {
+  const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+  if (!gl) return;
+
+  const program = createProgram(gl);
+  gl.useProgram(program);
+
+  const quad = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(program, "aPos");
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, paintPlaceholderPhoto(512, hue));
+
+  const uMouse = gl.getUniformLocation(program, "uMouse");
+  const uStrength = gl.getUniformLocation(program, "uStrength");
+  const uTime = gl.getUniformLocation(program, "uTime");
+  const uTex = gl.getUniformLocation(program, "uTex");
+
+  const state = { mx: 0.5, my: 0.5, strength: 0, targetStrength: 0 };
+
+  function resize() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  resize();
+  window.addEventListener("resize", resize);
+
+  canvas.parentElement.addEventListener("mousemove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    state.mx = (e.clientX - rect.left) / rect.width;
+    state.my = 1.0 - (e.clientY - rect.top) / rect.height; // WebGLのY軸は下から上
+  });
+  canvas.parentElement.addEventListener("mouseenter", () => { state.targetStrength = 1; });
+  canvas.parentElement.addEventListener("mouseleave", () => { state.targetStrength = 0; });
+
+  let t = 0;
+  function render() {
+    t += 0.016;
+    state.strength += (state.targetStrength - state.strength) * 0.08;
+
+    gl.useProgram(program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(uTex, 0);
+    gl.uniform2f(uMouse, state.mx, state.my);
+    gl.uniform1f(uStrength, state.strength);
+    gl.uniform1f(uTime, t);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+  render();
+}
+
+// ---- ワークグリッドを組み立てる ----
+const WORKS = [
+  { title: "Field Study",   cat: "Brand / Web",     hue: 18 },
+  { title: "Northline",     cat: "Digital / UI",    hue: 200 },
+  { title: "Arclight",      cat: "Motion / WebGL",  hue: 280 },
+  { title: "Paper & Salt",  cat: "Identity / Web",  hue: 130 },
+];
+
+const grid = document.getElementById("workGrid");
+WORKS.forEach((work, i) => {
+  const card = document.createElement("div");
+  card.className = "work-card";
+  card.setAttribute("data-cursor", "View");
+  card.innerHTML = `
+    <canvas></canvas>
+    <div class="work-meta">
+      <div class="n">${String(i + 1).padStart(2, "0")}</div>
+      <div class="t">${work.title}</div>
+      <div class="c">${work.cat}</div>
+    </div>
+  `;
+  grid.appendChild(card);
+  initRippleCanvas(card.querySelector("canvas"), work.hue);
+  bindMagneticCursor(card);
+});
+
+</script>
+</body>
+</html>
