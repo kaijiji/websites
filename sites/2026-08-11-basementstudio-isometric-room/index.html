@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Isometric Basement Room — 探索できるアイソメトリック3Dルーム デモ</title>
+<style>
+  :root{
+    --bg-top:#1b1b24;
+    --bg-bottom:#0b0b10;
+    --panel-bg:#17171d;
+    --accent:#ffb454;
+    --ink:#f2ede4;
+    --ink-dim:#a8a3b0;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;
+    height:100%;
+    overflow:hidden;
+    background:var(--bg-bottom);
+    font-family:"Helvetica Neue",Arial,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+    color:var(--ink);
+    cursor:none; /* 標準カーソルを消し、自作カーソルに置き換える */
+    -webkit-tap-highlight-color:transparent;
+  }
+  #scene{
+    display:block;
+    width:100vw;
+    height:100vh;
+    touch-action:none;
+  }
+
+  /* ---------- カスタムカーソル ---------- */
+  #cursor{
+    position:fixed;
+    top:0;
+    left:0;
+    z-index:50;
+    pointer-events:none;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    will-change:transform;
+  }
+  #cursor .dot{
+    width:10px;
+    height:10px;
+    margin-left:-5px;
+    margin-top:-5px;
+    border:1.5px solid var(--accent);
+    border-radius:50%;
+    background:rgba(255,180,84,.15);
+    transition:width .18s ease, height .18s ease, margin .18s ease, background .18s ease;
+  }
+  #cursor.hover .dot{
+    width:16px;
+    height:16px;
+    margin-left:-8px;
+    margin-top:-8px;
+    background:rgba(255,180,84,.35);
+  }
+  #cursor .label{
+    margin-left:-2px;
+    padding:3px 8px;
+    font-size:11px;
+    letter-spacing:.08em;
+    white-space:nowrap;
+    background:rgba(10,10,14,.75);
+    border:1px solid rgba(255,180,84,.5);
+    border-radius:3px;
+    opacity:0;
+    transform:translateY(2px) scale(.85);
+    transform-origin:left center;
+    transition:opacity .18s ease, transform .18s ease;
+    overflow:hidden;
+    max-width:0;
+  }
+  #cursor.hover .label{
+    opacity:1;
+    transform:translateY(0) scale(1);
+    max-width:220px;
+  }
+  #cursor .label.marquee-wrap{
+    max-width:140px;
+  }
+  #cursor .label .marquee-track{
+    display:inline-block;
+    padding-left:100%;
+    animation:marquee 4.5s linear infinite;
+  }
+  @keyframes marquee{
+    0%{ transform:translateX(0); }
+    100%{ transform:translateX(-100%); }
+  }
+
+  /* ---------- HUD ---------- */
+  #hint{
+    position:fixed;
+    left:20px;
+    bottom:18px;
+    z-index:20;
+    font-size:12px;
+    letter-spacing:.04em;
+    color:var(--ink-dim);
+    pointer-events:none;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);
+  }
+  #hint b{color:var(--ink);}
+  #title{
+    position:fixed;
+    left:20px;
+    top:18px;
+    z-index:20;
+    font-size:12px;
+    letter-spacing:.18em;
+    text-transform:uppercase;
+    color:var(--ink-dim);
+    pointer-events:none;
+  }
+  #title b{
+    display:block;
+    font-size:16px;
+    letter-spacing:.02em;
+    text-transform:none;
+    color:var(--ink);
+    margin-top:2px;
+  }
+
+  /* ---------- インスペクトパネル ---------- */
+  #overlay{
+    position:fixed;
+    inset:0;
+    z-index:40;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:rgba(6,6,9,0);
+    backdrop-filter:blur(0px);
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .4s ease, background .4s ease, backdrop-filter .4s ease;
+  }
+  #overlay.open{
+    opacity:1;
+    pointer-events:auto;
+    background:rgba(6,6,9,.55);
+    backdrop-filter:blur(6px);
+  }
+  #card{
+    width:min(420px, 86vw);
+    background:var(--panel-bg);
+    border:1px solid rgba(255,180,84,.25);
+    border-radius:10px;
+    padding:22px 24px 24px;
+    transform:scale(.92) translateY(10px);
+    transition:transform .4s cubic-bezier(.2,.8,.2,1);
+    box-shadow:0 30px 60px rgba(0,0,0,.5);
+  }
+  #overlay.open #card{
+    transform:scale(1) translateY(0);
+  }
+  #card .eyebrow{
+    font-size:11px;
+    letter-spacing:.14em;
+    color:var(--accent);
+    text-transform:uppercase;
+  }
+  #card h2{
+    margin:6px 0 10px;
+    font-size:20px;
+  }
+  #card p{
+    margin:0 0 18px;
+    font-size:13px;
+    line-height:1.7;
+    color:var(--ink-dim);
+  }
+  #card button{
+    appearance:none;
+    border:1px solid rgba(255,180,84,.5);
+    background:transparent;
+    color:var(--ink);
+    padding:8px 16px;
+    font-size:12px;
+    letter-spacing:.05em;
+    border-radius:5px;
+    cursor:pointer;
+  }
+  #card button:hover{ background:rgba(255,180,84,.15); }
+
+  /* ---------- スピーカー用ティッカー ---------- */
+  #ticker{
+    position:fixed;
+    left:0; right:0; bottom:0;
+    z-index:15;
+    padding:8px 0;
+    background:rgba(10,10,14,.7);
+    border-top:1px solid rgba(255,180,84,.25);
+    font-size:12px;
+    letter-spacing:.08em;
+    color:var(--accent);
+    overflow:hidden;
+    white-space:nowrap;
+    transform:translateY(100%);
+    transition:transform .35s ease;
+  }
+  #ticker.on{ transform:translateY(0); }
+  #ticker span{
+    display:inline-block;
+    padding-left:100%;
+    animation:marquee 9s linear infinite;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+
+<div id="title">Reproduction demo<b>Isometric Basement Room</b></div>
+<div id="hint"><b>WASD / 矢印キー</b>で部屋を移動 ・ オブジェクトにカーソルを合わせてクリックすると詳細を表示</div>
+
+<div id="cursor">
+  <div class="dot"></div>
+  <div class="label" id="cursor-label"></div>
+</div>
+
+<div id="overlay">
+  <div id="card">
+    <div class="eyebrow">INSPECT</div>
+    <h2 id="card-title">—</h2>
+    <p id="card-body">—</p>
+    <button id="card-close">閉じる (Esc)</button>
+  </div>
+</div>
+
+<div id="ticker"><span>♪ NOW PLAYING — DEMO LOOP 01 ・ このテキストはダミーです ・ ♪ NOW PLAYING — DEMO LOOP 01 ・</span></div>
+
+<script>
+/* ==========================================================================
+ * Isometric Basement Room — reproduction demo (vanilla JS, no libraries)
+ *
+ * 実在サイト basement.studio (https://basement.studio/) が公開している
+ * "歩き回れるアイソメトリック風3Dの部屋の中に、クリックして調べられる
+ * オブジェクトが点在している" という体験の「仕組み」だけを学習用に再現した
+ * オリジナル実装です。実サイトのソースコード・3Dモデル・テキスト・配色の
+ * 正確な値は一切使用していません（詳しくは同フォルダの README.md を参照）。
+ *
+ * ここでは WebGL/Three.js は使わず、<canvas> の2Dコンテキストだけで
+ * 「アイソメトリック(見下ろし斜め)投影」を自前計算しています。
+ * 3D的に見えるものの正体は、
+ *   1) (x, y, z) の3D座標を2Dのスクリーン座標に変換する `project()` 関数
+ *   2) 立方体を「奥から手前」の順に描く画家のアルゴリズム(painter's algorithm)
+ * の2つだけです。ライブラリを使わずに3D風の絵を作る仕組みを学べます。
+ *
+ * ------------------------------------------------------------------------
+ * そのままコピーして使う場合は:
+ *   - <canvas id="scene">、#cursor、#overlay、#ticker の各要素とこの
+ *     <script> をまとめてコピーしてください。
+ *   - ROOM_OBJECTS 配列を書き換えれば、自分のオブジェクト構成に差し替え
+ *     られます（家具の代わりに製品カードやポートフォリオ作品を配置する、
+ *     等の応用が可能です）。
+ * ==========================================================================
+ */
+
+(() => {
+  "use strict";
+
+  /* ---------------------------------------------------------------------
+   * 1. アイソメトリック投影ユーティリティ
+   * ------------------------------------------------------------------- */
+
+  // 1ユニット(床タイル1マス分)あたりの基準ピクセルサイズ
+  const TILE = 46;
+
+  // ワールド座標 (x: 左右, y: 高さ, z: 奥行き) を
+  // スクリーン座標 {x, y} に変換する。
+  // cam.x / cam.z でカメラの注視点をずらし(=部屋の中を移動)、
+  // cam.zoom で拡大縮小(インスペクト時のズームイン演出に使用)できる。
+  function project(x, y, z, cam) {
+    const dx = x - cam.x;
+    const dz = z - cam.z;
+    const s = TILE * cam.zoom;
+    // 2:1のクラシックなアイソメトリック(斜め45度見下ろし)変換
+    const screenX = (dx - dz) * s * 0.866; // cos(30deg)
+    const screenY = (dx + dz) * s * 0.5 - y * s;
+    return { x: screenX + cam.originX, y: screenY + cam.originY };
+  }
+
+  // 16進カラーを明るさ係数 factor 倍にして "rgb(...)" 文字列で返す。
+  // 立方体の3面(上面・右面・前面)を陰影付けするために使う。
+  function shade(hex, factor) {
+    const n = parseInt(hex.slice(1), 16);
+    let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    r = Math.min(255, Math.round(r * factor));
+    g = Math.min(255, Math.round(g * factor));
+    b = Math.min(255, Math.round(b * factor));
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  /* ---------------------------------------------------------------------
+   * 2. 直方体(ボックス)ユーティリティ
+   *    box = { x, y, z, w, h, d, color }  (x,y,z は最も原点寄りの角)
+   * ------------------------------------------------------------------- */
+
+  function boxFaces(b) {
+    const { x, y, z, w, h, d } = b;
+    return {
+      // 上面 (y = y+h)
+      top: [
+        [x, y + h, z], [x + w, y + h, z],
+        [x + w, y + h, z + d], [x, y + h, z + d],
+      ],
+      // 右面 (x = x+w) — カメラから見て右手前を向く面
+      right: [
+        [x + w, y, z], [x + w, y + h, z],
+        [x + w, y + h, z + d], [x + w, y, z + d],
+      ],
+      // 前面 (z = z+d) — カメラから見て左手前を向く面
+      front: [
+        [x, y, z + d], [x + w, y, z + d],
+        [x + w, y + h, z + d], [x, y + h, z + d],
+      ],
+    };
+  }
+
+  function drawBox(ctx, cam, b) {
+    const faces = boxFaces(b);
+    const order = [
+      ["top", 1.18],
+      ["right", 0.62],
+      ["front", 0.85],
+    ];
+    for (const [key, factor] of order) {
+      const pts = faces[key].map((p) => project(p[0], p[1], p[2], cam));
+      ctx.beginPath();
+      pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fillStyle = shade(b.color, factor);
+      ctx.fill();
+    }
+  }
+
+  // 当たり判定・並べ替え用に、ボックスの8頂点すべてを投影した
+  // スクリーン空間のバウンディングボックスを返す(簡易版レイキャスト)。
+  function screenBounds(cam, b) {
+    const { x, y, z, w, h, d } = b;
+    const corners = [
+      [x, y, z], [x + w, y, z], [x, y + h, z], [x + w, y + h, z],
+      [x, y, z + d], [x + w, y, z + d], [x, y + h, z + d], [x + w, y + h, z + d],
+    ].map((p) => project(p[0], p[1], p[2], cam));
+    const xs = corners.map((p) => p.x);
+    const ys = corners.map((p) => p.y);
+    return {
+      minX: Math.min(...xs), maxX: Math.max(...xs),
+      minY: Math.min(...ys), maxY: Math.max(...ys),
+    };
+  }
+
+  /* ---------------------------------------------------------------------
+   * 3. 部屋のオブジェクト定義
+   *    - 床タイルは非インタラクティブな装飾
+   *    - room オブジェクトは interactive:true を持ち、クリック/ホバー可能
+   *      （basement.studio の "inspectables" コンポーネント群に相当する
+   *      デモ用のダミーオブジェクト。中身のテキストはすべて架空）
+   * ------------------------------------------------------------------- */
+
+  const renderables = []; // {box, interactive?}
+
+  // --- 床タイル(市松模様) ---
+  const FLOOR_N = 5; // 中心から ±FLOOR_N マス
+  for (let ix = -FLOOR_N; ix <= FLOOR_N; ix++) {
+    for (let iz = -FLOOR_N; iz <= FLOOR_N; iz++) {
+      const even = (ix + iz) % 2 === 0;
+      renderables.push({
+        box: { x: ix, y: -0.12, z: iz, w: 1, h: 0.12, d: 1, color: even ? "#26262f" : "#1e1e26" },
+      });
+    }
+  }
+
+  // --- インタラクティブな家具/小物 ---
+  const ROOM_OBJECTS = [
+    {
+      id: "lamp",
+      kind: "toggle",
+      label: "灯りをつける",
+      boxes: [
+        { x: -3.2, y: 0, z: -3.2, w: 0.22, h: 1.9, d: 0.22, color: "#3a3a44" },
+        { x: -3.55, y: 1.9, z: -3.55, w: 0.9, h: 0.3, d: 0.9, color: "#e8c987" },
+      ],
+      glowAt: { x: -3.1, y: 2.1, z: -3.1 },
+    },
+    {
+      id: "arcade",
+      kind: "panel",
+      label: "調べる",
+      title: "アーケード筐体(ダミー)",
+      body: "実サイトの basement.studio には遊べるミニゲームが仕込まれた筐体があります。このデモではその「クリックで詳細パネルが開く」という操作感だけを再現しています。",
+      boxes: [
+        { x: -0.6, y: 0, z: -3.3, w: 1.1, h: 1.7, d: 0.8, color: "#454b6b" },
+        { x: -0.35, y: 0.75, z: -3.32, w: 0.6, h: 0.7, d: 0.05, color: "#7fd6ff" },
+      ],
+    },
+    {
+      id: "door",
+      kind: "panel",
+      label: "調べる",
+      title: "鍵のかかったドア(ダミー)",
+      body: "このドアは開きません。基点となるサイトにも「まだ開かない」演出のドアがある、という着想だけを借りたイースターエッグ的なオブジェクトです。",
+      boxes: [{ x: 2.6, y: 0, z: -3.2, w: 0.9, h: 2.2, d: 0.22, color: "#5c3a3a" }],
+    },
+    {
+      id: "plant",
+      kind: "panel",
+      label: "調べる",
+      title: "観葉植物(ダミー)",
+      body: "部屋の隅にある小道具の一例です。実サイトのような手描き風テクスチャは使わず、色の違う直方体を重ねるだけで「それらしい」シルエットを作っています。",
+      boxes: [
+        { x: 3.0, y: 0, z: 0.4, w: 0.6, h: 0.45, d: 0.6, color: "#7a5a44" },
+        { x: 3.1, y: 0.45, z: 0.5, w: 0.4, h: 0.5, d: 0.4, color: "#4c8a52" },
+        { x: 2.95, y: 0.75, z: 0.35, w: 0.3, h: 0.4, d: 0.3, color: "#5aa15f" },
+      ],
+    },
+    {
+      id: "speaker",
+      kind: "speaker",
+      label: "再生する",
+      boxes: [{ x: -3.1, y: 0, z: 1.4, w: 0.8, h: 1.2, d: 0.6, color: "#2b2b32" }],
+    },
+  ];
+
+  for (const obj of ROOM_OBJECTS) {
+    for (const box of obj.boxes) renderables.push({ box, owner: obj });
+  }
+
+  // 画家のアルゴリズム: (x+z) が大きい = カメラに近い ものを後に描く。
+  // カメラを動かしても全オブジェクトが同じだけ平行移動するだけなので、
+  // 奥行きの前後関係は変わらない → ソートは初回に一度だけでよい。
+  renderables.sort((a, b) => {
+    const da = a.box.x + a.box.z + a.box.y * 0.001;
+    const db = b.box.x + b.box.z + b.box.y * 0.001;
+    return da - db;
+  });
+
+  /* ---------------------------------------------------------------------
+   * 4. アンビエントパーティクル(埃・光の粒)
+   * ------------------------------------------------------------------- */
+
+  const particles = Array.from({ length: 40 }, () => ({
+    x: (Math.random() - 0.5) * 900,
+    y: Math.random() * 700,
+    r: Math.random() * 1.6 + 0.4,
+    speed: Math.random() * 0.25 + 0.08,
+    sway: Math.random() * Math.PI * 2,
+  }));
+
+  /* ---------------------------------------------------------------------
+   * 5. カメラ・状態管理
+   * ------------------------------------------------------------------- */
+
+  const canvas = document.getElementById("scene");
+  const ctx = canvas.getContext("2d");
+
+  const cam = { x: 0, y: 0, z: 0, zoom: 1, originX: 0, originY: 0 };
+  const camVel = { x: 0, z: 0 };
+  let camZoomTarget = 1;
+  let camPanTargetX = 0;
+  let camPanTargetZ = 0;
+
+  let lampOn = false;
+  let speakerOn = false;
+  let inspecting = null; // ROOM_OBJECTS の id、または null
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = innerWidth * dpr;
+    canvas.height = innerHeight * dpr;
+    canvas.style.width = innerWidth + "px";
+    canvas.style.height = innerHeight + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cam.originX = innerWidth / 2;
+    cam.originY = innerHeight / 2 + 40;
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  /* ---------------------------------------------------------------------
+   * 6. WASD / 矢印キーでの移動
+   * ------------------------------------------------------------------- */
+
+  const keys = Object.create(null);
+  window.addEventListener("keydown", (e) => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key === "Escape") closePanel();
+  });
+  window.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
+
+  function updateCamera() {
+    if (!inspecting) {
+      let mx = 0, mz = 0;
+      if (keys["w"] || keys["arrowup"]) mz -= 1;
+      if (keys["s"] || keys["arrowdown"]) mz += 1;
+      if (keys["a"] || keys["arrowleft"]) mx -= 1;
+      if (keys["d"] || keys["arrowright"]) mx += 1;
+      if (mx || mz) {
+        const len = Math.hypot(mx, mz);
+        mx /= len; mz /= len;
+      }
+      const SPEED = 0.05;
+      camVel.x = lerp(camVel.x, mx * SPEED, 0.15);
+      camVel.z = lerp(camVel.z, mz * SPEED, 0.15);
+      camPanTargetX = clamp(camPanTargetX + camVel.x, -3.5, 3.5);
+      camPanTargetZ = clamp(camPanTargetZ + camVel.z, -3.5, 3.5);
+      camZoomTarget = 1;
+    } else {
+      camVel.x *= 0.8; camVel.z *= 0.8;
+    }
+    cam.x = lerp(cam.x, camPanTargetX, 0.12);
+    cam.z = lerp(cam.z, camPanTargetZ, 0.12);
+    cam.zoom = lerp(cam.zoom, camZoomTarget, 0.08);
+  }
+
+  /* ---------------------------------------------------------------------
+   * 7. ホバー判定(簡易レイキャスト)とカスタムカーソル
+   * ------------------------------------------------------------------- */
+
+  const cursorEl = document.getElementById("cursor");
+  const cursorLabelEl = document.getElementById("cursor-label");
+  const mouse = { x: innerWidth / 2, y: innerHeight / 2 };
+  const cursorPos = { x: mouse.x, y: mouse.y };
+  let hovered = null;
+
+  window.addEventListener("mousemove", (e) => {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+  });
+
+  function pickHovered() {
+    if (inspecting) return null;
+    // 手前(配列の後ろ)から探すことで、重なった場合に一番手前のものを優先する
+    for (let i = renderables.length - 1; i >= 0; i--) {
+      const r = renderables[i];
+      if (!r.owner) continue;
+      const b = screenBounds(cam, r.box);
+      if (mouse.x >= b.minX && mouse.x <= b.maxX && mouse.y >= b.minY && mouse.y <= b.maxY) {
+        return r.owner;
+      }
+    }
+    return null;
+  }
+
+  function updateCursor() {
+    cursorPos.x = lerp(cursorPos.x, mouse.x, 0.28); // ばね風の追従(指数減衰)
+    cursorPos.y = lerp(cursorPos.y, mouse.y, 0.28);
+    cursorEl.style.transform = `translate(${cursorPos.x}px, ${cursorPos.y}px)`;
+
+    hovered = pickHovered();
+    canvas.style.cursor = "none";
+
+    if (hovered) {
+      cursorEl.classList.add("hover");
+      if (hovered.kind === "speaker") {
+        cursorLabelEl.classList.add("marquee-wrap");
+        cursorLabelEl.innerHTML = `<span class="marquee-track">[ ${hovered.label} ]&nbsp;&nbsp;&nbsp;</span>`;
+      } else {
+        cursorLabelEl.classList.remove("marquee-wrap");
+        cursorLabelEl.textContent = `[ ${hovered.label} ]`;
+      }
+    } else {
+      cursorEl.classList.remove("hover");
+    }
+  }
+
+  /* ---------------------------------------------------------------------
+   * 8. クリック操作(トグル/インスペクトパネル/スピーカー)
+   * ------------------------------------------------------------------- */
+
+  const overlayEl = document.getElementById("overlay");
+  const cardTitleEl = document.getElementById("card-title");
+  const cardBodyEl = document.getElementById("card-body");
+  const tickerEl = document.getElementById("ticker");
+
+  function openPanel(obj) {
+    inspecting = obj.id;
+    camZoomTarget = 1.55;
+    // クリックしたオブジェクトの位置にカメラを寄せる(ズームイン演出)
+    const b = obj.boxes[0];
+    camPanTargetX = b.x + b.w / 2;
+    camPanTargetZ = b.z + b.d / 2;
+    cardTitleEl.textContent = obj.title;
+    cardBodyEl.textContent = obj.body;
+    overlayEl.classList.add("open");
+  }
+
+  function closePanel() {
+    if (!inspecting) return;
+    inspecting = null;
+    camZoomTarget = 1;
+    overlayEl.classList.remove("open");
+  }
+
+  document.getElementById("card-close").addEventListener("click", closePanel);
+  overlayEl.addEventListener("click", (e) => { if (e.target === overlayEl) closePanel(); });
+
+  // 簡易ビープ音(WebAudio)。ユーザー操作(クリック)の中でのみ再生する。
+  let audioCtx = null;
+  function beep(freq) {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.frequency.value = freq;
+      osc.type = "square";
+      gain.gain.value = 0.04;
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.18);
+      osc.stop(audioCtx.currentTime + 0.2);
+    } catch (err) { /* AudioContext が使えない環境では無視 */ }
+  }
+
+  canvas.addEventListener("click", () => {
+    if (inspecting) return;
+    const obj = hovered;
+    if (!obj) return;
+    if (obj.kind === "toggle") {
+      lampOn = !lampOn;
+      beep(lampOn ? 880 : 440);
+    } else if (obj.kind === "speaker") {
+      speakerOn = !speakerOn;
+      tickerEl.classList.toggle("on", speakerOn);
+      beep(speakerOn ? 660 : 330);
+    } else {
+      openPanel(obj);
+    }
+  });
+
+  /* ---------------------------------------------------------------------
+   * 9. メインレンダーループ
+   * ------------------------------------------------------------------- */
+
+  function drawBackground() {
+    const g = ctx.createLinearGradient(0, 0, 0, innerHeight);
+    g.addColorStop(0, "#1b1b24");
+    g.addColorStop(1, "#0b0b10");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, innerWidth, innerHeight);
+  }
+
+  function drawGlow() {
+    if (!lampOn) return;
+    const lampObj = ROOM_OBJECTS.find((o) => o.id === "lamp");
+    const p = project(lampObj.glowAt.x, lampObj.glowAt.y, lampObj.glowAt.z, cam);
+    const r = 220 * cam.zoom;
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+    g.addColorStop(0, "rgba(255,204,120,0.35)");
+    g.addColorStop(1, "rgba(255,204,120,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+  }
+
+  function drawParticles(dt) {
+    ctx.fillStyle = "rgba(255,235,210,0.5)";
+    for (const p of particles) {
+      p.y -= p.speed * dt;
+      p.sway += 0.01 * dt;
+      if (p.y < -20) p.y = innerHeight + 20;
+      const sx = innerWidth / 2 + p.x + Math.sin(p.sway) * 12;
+      ctx.beginPath();
+      ctx.arc(sx, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawHoverRing() {
+    if (!hovered || inspecting) return;
+    const b = screenBounds(cam, hovered.boxes[0]);
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,180,84,0.6)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(b.minX - 4, b.minY - 4, b.maxX - b.minX + 8, b.maxY - b.minY + 8);
+    ctx.restore();
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(now - last, 48);
+    last = now;
+
+    updateCamera();
+
+    drawBackground();
+    for (const r of renderables) drawBox(ctx, cam, r.box);
+    drawGlow();
+    drawHoverRing();
+    drawParticles(dt);
+
+    updateCursor();
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
