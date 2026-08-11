@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The Triadic Ballet AI 風 表現デモ — 3幕構成・舞台照明カラー連動スクロールストーリーテリング</title>
+<style>
+  :root{
+    --stage-r:244; --stage-g:211; --stage-b:94;   /* 第1幕: 陽気で滑稽な黄色 */
+    --fg:#141210;
+    --serif:"Iowan Old Style","Palatino Linotype",Georgia,"Hiragino Mincho ProN",serif;
+    --sans:"Helvetica Neue",Arial,"Hiragino Sans","Yu Gothic",sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html{ scroll-behavior:auto; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:rgb(var(--stage-r),var(--stage-g),var(--stage-b));
+    color:var(--fg);
+    font-family:var(--sans);
+    overflow-x:hidden;
+    transition:color .6s ease;
+  }
+  a{ color:inherit; }
+  ::selection{ background:var(--fg); color:rgb(var(--stage-r),var(--stage-g),var(--stage-b)); }
+
+  /* ---------- ヘッダー ---------- */
+  header{
+    position:fixed; top:0; left:0; right:0; z-index:50;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:1.4rem 5vw; mix-blend-mode:difference; color:#fff;
+    font-size:0.72rem; letter-spacing:0.16em; text-transform:uppercase;
+  }
+  header .brand{ font-family:var(--serif); font-size:0.9rem; letter-spacing:0.08em; }
+
+  /* ---------- 幕番号ナビ(右固定) ---------- */
+  /* header同様mix-blend-mode:differenceで、舞台の色がどれだけ暗くなっても
+     常にコントラストが保たれるようにする(明度に応じたJS制御が不要になる) */
+  #act-nav{
+    position:fixed; right:5vw; bottom:4vw; z-index:50;
+    display:flex; flex-direction:column; gap:1.1rem; align-items:flex-end;
+    mix-blend-mode:difference; color:#fff;
+  }
+  #act-nav button{
+    background:none; border:none; padding:0; cursor:pointer;
+    font-family:var(--serif); font-size:1rem; letter-spacing:0.08em;
+    color:currentColor; opacity:0.5; transition:opacity .5s ease, transform .4s ease;
+  }
+  #act-nav button.is-active{ opacity:1; transform:scale(1.15); }
+
+  /* ---------- 舞台(固定・背景) ---------- */
+  #stage{
+    position:fixed; inset:0; z-index:1; overflow:hidden; pointer-events:none;
+  }
+  #stage .spotlight{
+    position:absolute; left:50%; top:52%; width:70vmax; height:70vmax;
+    transform:translate(-50%,-50%);
+    background:radial-gradient(circle, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.08) 42%, rgba(255,255,255,0) 68%);
+    mix-blend-mode:screen; transition:opacity .8s ease;
+  }
+  #dancer{
+    position:absolute; left:50%; top:50%; width:min(46vh,58vw); height:auto;
+    transform:translate(-50%,-50%);
+    filter:drop-shadow(0 2vh 3vh rgba(0,0,0,0.25));
+  }
+  #dancer .costume{ transition:fill .6s ease; }
+
+  /* ---------- 本文レイアウト ---------- */
+  main{ position:relative; z-index:2; }
+  section{ position:relative; padding:0 5vw; }
+
+  #hero{
+    height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center;
+  }
+  #hero h1{
+    font-family:var(--serif); font-weight:400; letter-spacing:0.02em;
+    font-size:clamp(2.6rem,8vw,6.4rem); margin:0 0 0.6rem;
+  }
+  #hero p{ font-size:0.85rem; letter-spacing:0.06em; color:currentColor; opacity:0.72; max-width:34ch; margin:0; }
+  #hero .scroll-cue{
+    position:absolute; bottom:2.4rem; font-size:0.68rem; letter-spacing:0.2em; text-transform:uppercase;
+    color:currentColor; opacity:0.6; animation:cue-bob 2.4s ease-in-out infinite;
+  }
+  @keyframes cue-bob{ 0%,100%{ transform:translateY(0); opacity:.5; } 50%{ transform:translateY(8px); opacity:1; } }
+
+  .act{ min-height:150vh; display:flex; align-items:center; }
+  .act .act-inner{ max-width:34ch; }
+  .act:nth-child(even) .act-inner{ margin-left:auto; text-align:right; }
+  .act .kicker{
+    display:block; font-size:0.68rem; letter-spacing:0.24em; text-transform:uppercase;
+    color:currentColor; opacity:0.62; margin-bottom:0.9rem;
+  }
+  .act h2{
+    font-family:var(--serif); font-weight:400; font-size:clamp(1.8rem,4.4vw,3rem);
+    margin:0 0 1.1rem; line-height:1.15;
+  }
+  /* --fg-soft(固定の暗い色)ではなくcurrentColor+opacityにすることで、
+     背景の明度が変わってJSがbody文字色を白/黒に切り替えても、
+     本文の「薄さ」の関係だけを保ったまま自動的に追従する */
+  .act p{ font-size:0.95rem; line-height:1.85; color:currentColor; opacity:0.72; margin:0; }
+
+  /* 単語単位のスクロールリビール */
+  .reveal-line{ overflow:hidden; display:block; }
+  .word{ display:inline-block; overflow:hidden; }
+  .word-inner{
+    display:inline-block; transform:translateY(110%);
+    transition:transform .7s cubic-bezier(.2,.8,.2,1);
+    transition-delay:calc(var(--i,0) * 26ms);
+  }
+  .act.is-in .word-inner, #hero.is-in .word-inner{ transform:translateY(0); }
+
+  footer{
+    position:relative; z-index:2; padding:8vh 5vw 6vh; text-align:center;
+    font-size:0.72rem; letter-spacing:0.1em; color:currentColor; opacity:0.6;
+  }
+
+  @media (max-width:720px){
+    #act-nav{ right:4vw; gap:0.8rem; }
+    #dancer{ width:min(38vh,70vw); opacity:0.55; }
+    .act .act-inner{ max-width:26ch; }
+    .act:nth-child(even) .act-inner{ margin-left:0; text-align:left; }
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <span class="brand">The Triadic Ballet</span>
+    <span>AI Reinterpretation — Demo</span>
+  </header>
+
+  <nav id="act-nav"></nav>
+
+  <div id="stage">
+    <div class="spotlight"></div>
+    <!--
+      幾何学的な「Bauhaus風ダンサー」。
+      Oskar Schlemmer の Triadic Ballet(1922年初演)で実際に使われた
+      「円錐・球・円盤で構成された抽象コスチューム」という史実上の様式を
+      参照し、SVGの図形だけでゼロから作図したオリジナルの意匠です。
+      対象サイトのAI生成画像・動画そのものは一切使用していません。
+    -->
+    <svg id="dancer" viewBox="0 0 200 300" xmlns="http://www.w3.org/2000/svg">
+      <ellipse class="costume" cx="100" cy="230" rx="46" ry="14" fill="rgba(20,16,12,0.15)"></ellipse>
+      <g id="dancer-arm-l" style="transform-origin:92px 108px;">
+        <rect x="60" y="102" width="34" height="10" rx="5" class="costume" fill="currentColor"></rect>
+      </g>
+      <g id="dancer-arm-r" style="transform-origin:108px 108px;">
+        <rect x="106" y="102" width="34" height="10" rx="5" class="costume" fill="currentColor"></rect>
+      </g>
+      <polygon id="dancer-body" class="costume" points="100,70 138,220 62,220" fill="currentColor"></polygon>
+      <ellipse id="dancer-skirt" class="costume" cx="100" cy="196" rx="40" ry="16" fill="currentColor" opacity="0.85"></ellipse>
+      <circle id="dancer-head" class="costume" cx="100" cy="46" r="22" fill="currentColor"></circle>
+    </svg>
+  </div>
+
+  <main>
+    <section id="hero">
+      <h1 class="reveal-line"><span class="word"><span class="word-inner">Three</span></span> <span class="word"><span class="word-inner">Acts,</span></span> <span class="word"><span class="word-inner">Three</span></span> <span class="word"><span class="word-inner">Stage</span></span> <span class="word"><span class="word-inner">Colours</span></span></h1>
+      <p class="reveal-line"><span class="word"><span class="word-inner">スクロールすると、幕(照明の色)とダンサーの姿勢が連動して変化します。</span></span></p>
+      <span class="scroll-cue">Scroll ↓</span>
+    </section>
+
+    <section class="act" id="act-1" data-act="0">
+      <div class="act-inner">
+        <span class="kicker reveal-line"><span class="word"><span class="word-inner">Act I — Yellow</span></span></span>
+        <h2 class="reveal-line"><span class="word"><span class="word-inner">陽気で</span></span> <span class="word"><span class="word-inner">滑稽な</span></span><br><span class="word"><span class="word-inner">舞台。</span></span></h2>
+        <p class="reveal-line"><span class="word"><span class="word-inner">明るいレモンイエローの照明のもと、円錐と円盤のコスチュームを纏ったダンサーがゆっくりと回転を始める、ユーモラスで軽やかな幕開き。</span></span></p>
+      </div>
+    </section>
+
+    <section class="act" id="act-2" data-act="1">
+      <div class="act-inner">
+        <span class="kicker reveal-line"><span class="word"><span class="word-inner">Act II — Rose</span></span></span>
+        <h2 class="reveal-line"><span class="word"><span class="word-inner">祝祭的で</span></span><br><span class="word"><span class="word-inner">儀式的な</span></span> <span class="word"><span class="word-inner">場面。</span></span></h2>
+        <p class="reveal-line"><span class="word"><span class="word-inner">照明が薔薇色に沈み、腕は左右へ大きく開く。動きはより荘厳になり、儀式めいた静けさが漂い始める。</span></span></p>
+      </div>
+    </section>
+
+    <section class="act" id="act-3" data-act="2">
+      <div class="act-inner">
+        <span class="kicker reveal-line"><span class="word"><span class="word-inner">Act III — Black</span></span></span>
+        <h2 class="reveal-line"><span class="word"><span class="word-inner">神秘的で</span></span><br><span class="word"><span class="word-inner">形而上学的な</span></span> <span class="word"><span class="word-inner">結び。</span></span></h2>
+        <p class="reveal-line"><span class="word"><span class="word-inner">舞台は漆黒に転じ、ダンサーのシルエットだけがスポットライトに浮かぶ。回転は静止に近づき、幕は静寂のうちに閉じる。</span></span></p>
+      </div>
+    </section>
+
+    <footer>
+      Original demo inspired by the historical staging concept of Oskar Schlemmer's <em>Triadisches Ballett</em> (1922)<br>
+      Reference: <strong>The Triadic Ballet AI</strong> by Isabelle Cuisset(isaWabi) — thetriadicballetai.com
+    </footer>
+  </main>
+
+<script>
+/* ============================================================================
+ * The Triadic Ballet AI 風 表現デモ — 再利用可能な関数群
+ * 外部ライブラリ不要。このファイル単体で動作します。
+ *
+ *   lerp(a, b, t)                  値の線形補間
+ *   mixColor(c1, c2, t)            [r,g,b] 配列同士の線形補間
+ *   sampleGradient(stops, t)       複数の色を並べたグラデーションからt(0-1)で色を取得
+ *   createScrollStageDriver(opts)  スクロール量→(幕番号, 幕内進捗, 全体進捗)を
+ *                                  rAFで滑らかに(lerpで遅延を付けて)計算し続ける
+ *   initActNav(navEl, sections)    幕番号ナビ(I/II/III)の自動生成・ハイライト・
+ *                                  クリックでのスクロール
+ *   initWordReveal(root)           IntersectionObserverによる単語単位の
+ *                                  スクロールリビール
+ * ========================================================================= */
+
+// ---- 1. 汎用ヘルパー -------------------------------------------------------
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function mixColor(c1, c2, t) {
+  return [
+    Math.round(lerp(c1[0], c2[0], t)),
+    Math.round(lerp(c1[1], c2[1], t)),
+    Math.round(lerp(c1[2], c2[2], t)),
+  ];
+}
+
+// stops: [[r,g,b], [r,g,b], ...] を globalT(0-1) で連続的にサンプリングする。
+// 幕の数がいくつに増減しても、この関数は書き換え不要で動く。
+function sampleGradient(stops, globalT) {
+  const t = Math.min(Math.max(globalT, 0), 1);
+  const segments = stops.length - 1;
+  const pos = t * segments;
+  const i = Math.min(Math.floor(pos), segments - 1);
+  const localT = pos - i;
+  return mixColor(stops[i], stops[i + 1], localT);
+}
+
+// ---- 2. スクロール連動ドライバー -------------------------------------------
+//
+// 「幕(act)ごとのセクション」の集合を渡すと、毎フレーム
+//   - どの幕にいるか(actIndex, 0始まり)
+//   - その幕の中での進捗(0-1)
+//   - 全セクションを通した進捗(0-1、色の補間に使う)
+// を計算し、onUpdate に渡し続ける。scroll イベント自体は間引きつつ、
+// 実際の見た目の更新は rAF 内で「目標値に向かって少しずつ近づける」
+// (=lerpする)ことで、スクロールがカクついても演出はなめらかに保たれる。
+function createScrollStageDriver(sections, onUpdate) {
+  let targetT = 0;   // 生のスクロール進捗(0-1)
+  let smoothT = 0;   // 実際に描画へ使う、遅延のかかった進捗
+  const SMOOTHING = 0.09; // 大きいほど追従が速い(0-1)
+
+  function computeTargetT() {
+    const first = sections[0];
+    const last = sections[sections.length - 1];
+    const start = first.offsetTop;
+    const end = last.offsetTop + last.offsetHeight - window.innerHeight;
+    const y = window.scrollY;
+    return end > start ? (y - start) / (end - start) : 0;
+  }
+
+  function tick() {
+    targetT = Math.min(Math.max(computeTargetT(), 0), 1);
+    smoothT = lerp(smoothT, targetT, SMOOTHING);
+
+    const pos = smoothT * (sections.length - 1);
+    const actIndex = Math.min(Math.floor(pos), sections.length - 1);
+    const actProgress = pos - actIndex;
+
+    onUpdate({ actIndex, actProgress, globalT: smoothT });
+    requestAnimationFrame(tick);
+  }
+
+  window.addEventListener("scroll", () => {}, { passive: true }); // スクロール自体はrAF側で毎フレーム読むだけでよい
+  requestAnimationFrame(tick);
+}
+
+// ---- 3. 幕番号ナビ ----------------------------------------------------------
+
+function initActNav(navEl, sections) {
+  const romans = ["I", "II", "III"];
+  const buttons = sections.map((sec, i) => {
+    const btn = document.createElement("button");
+    btn.textContent = romans[i] || String(i + 1);
+    btn.addEventListener("click", () => {
+      sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    navEl.appendChild(btn);
+    return btn;
+  });
+
+  return function setActiveNav(actIndex) {
+    buttons.forEach((btn, i) => btn.classList.toggle("is-active", i === actIndex));
+  };
+}
+
+// ---- 4. 単語単位のスクロールリビール ----------------------------------------
+
+function initWordReveal(root) {
+  root.querySelectorAll(".word-inner").forEach((el, i) => {
+    el.style.setProperty("--i", i % 14); // 同一セクション内での見た目上の目安
+  });
+
+  const targets = root.querySelectorAll(".act, #hero");
+  const io = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) entry.target.classList.add("is-in");
+      });
+    },
+    { threshold: 0.3 }
+  );
+  targets.forEach((el) => io.observe(el));
+}
+
+// ---- 5. ダンサーの姿勢(ポーズ)を幕ごとに補間する ----------------------------
+//
+// 各幕の「らしさ」を、回転角・腕の開き具合・全体スケールという
+// 3つの数値だけで表現し、幕の間はなめらかに補間(モーフィング)する。
+const DANCER_POSES = [
+  { rotate: -6, armL: -18, armR: 18, scale: 0.92 },  // Act I: 滑稽で軽い
+  { rotate: 4, armL: -55, armR: 55, scale: 1.0 },   // Act II: 儀式的で大きく開く
+  { rotate: 14, armL: -8, armR: 8, scale: 1.06 },   // Act III: 静止に近づく
+];
+
+const STAGE_COLOR_STOPS = [
+  [244, 211, 94],   // Act I: 陽気な黄色
+  [201, 24, 74],    // Act II: 薔薇色
+  [10, 10, 12],      // Act III: 漆黒
+];
+const COSTUME_COLOR_STOPS = [
+  [210, 60, 40],    // Act I: 珊瑚色のコスチューム
+  [244, 208, 120],  // Act II: 金色
+  [244, 242, 238],  // Act III: 銀白色(闇に浮かぶシルエット)
+];
+
+function poseDancer(dancer, globalT) {
+  const pos = globalT * (DANCER_POSES.length - 1);
+  const i = Math.min(Math.floor(pos), DANCER_POSES.length - 2 >= 0 ? DANCER_POSES.length - 2 : 0);
+  const localT = pos - i;
+  const a = DANCER_POSES[i];
+  const b = DANCER_POSES[Math.min(i + 1, DANCER_POSES.length - 1)];
+
+  const rotate = lerp(a.rotate, b.rotate, localT);
+  const armL = lerp(a.armL, b.armL, localT);
+  const armR = lerp(a.armR, b.armR, localT);
+  const scale = lerp(a.scale, b.scale, localT);
+
+  dancer.querySelector("#dancer").style.transform =
+    `translate(-50%,-50%) rotate(${rotate}deg) scale(${scale})`;
+  dancer.querySelector("#dancer-arm-l").style.transform = `rotate(${armL}deg)`;
+  dancer.querySelector("#dancer-arm-r").style.transform = `rotate(${armR}deg)`;
+}
+
+// ---- 6. 初期化 --------------------------------------------------------------
+
+(function init() {
+  const sections = Array.from(document.querySelectorAll("#hero, .act"));
+  const navEl = document.getElementById("act-nav");
+  const stageEl = document.getElementById("stage");
+  const root = document.documentElement;
+
+  const setActiveNav = initActNav(navEl, sections.slice(1)); // ナビはActI〜IIIのみ(ヒーローは除く)
+
+  // IntersectionObserverの設置を2フレーム分遅らせる。
+  // ページ読み込み直後(フォント適用前など)にobserve()すると、
+  // まだセクションの高さ・位置が確定しておらず、画面外のはずの幕が
+  // 誤って「交差している」と判定されてしまうことがある。
+  // is-inは一度付いたら消さない一方通行の実装のため、この誤判定が
+  // 起きるとその幕の文字が最初から見えたままになってしまう。
+  // 2回のrequestAnimationFrameでレイアウト確定後まで待つことで回避する。
+  requestAnimationFrame(() => requestAnimationFrame(() => initWordReveal(document)));
+
+  createScrollStageDriver(sections, ({ actIndex, globalT }) => {
+    // 幕全体(ヒーロー含む4セクション)の進捗を、色補間用には
+    // ヒーローを除いた3幕分(0-1)に再マッピングする。
+    const colorT = Math.min(Math.max((globalT * (sections.length - 1) - 1) / (sections.length - 2), 0), 1);
+
+    const stage = sampleGradient(STAGE_COLOR_STOPS, colorT);
+    const costume = sampleGradient(COSTUME_COLOR_STOPS, colorT);
+
+    root.style.setProperty("--stage-r", stage[0]);
+    root.style.setProperty("--stage-g", stage[1]);
+    root.style.setProperty("--stage-b", stage[2]);
+
+    const dancerSvg = document.getElementById("dancer");
+    dancerSvg.style.color = `rgb(${costume[0]},${costume[1]},${costume[2]})`;
+
+    // 文字色は背景の明度に応じて白/黒を自動選択(WCAG簡易判定)
+    const luminance = (0.299 * stage[0] + 0.587 * stage[1] + 0.114 * stage[2]) / 255;
+    // --fgを直接書き換える。bodyのcolorも::selectionも同じ変数を参照しているので、
+    // ここ1箇所を更新するだけで文字色まわり全体が明暗に追従する。
+    root.style.setProperty("--fg", luminance > 0.55 ? "#141210" : "#f4f2ee");
+
+    poseDancer(document, colorT);
+    setActiveNav(Math.max(0, actIndex - 1));
+
+    stageEl.querySelector(".spotlight").style.opacity = luminance < 0.4 ? "1" : "0.55";
+  });
+})();
+</script>
+</body>
+</html>
