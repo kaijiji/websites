@@ -33,7 +33,8 @@ export class Fx {
     this.points = new THREE.Points(g, this.pmat); this.points.frustumCulled = false; this.points.renderOrder = 5;
     this.scene.add(this.points);
     // ---- 使い回すメッシュ ----
-    this.rings = []; this.markers = []; this.pillars = []; this.balls = [];
+    this.rings = []; this.markers = []; this.pillars = []; this.balls = []; this.tracers = []; this.zones = [];
+    this.boxGeo = new THREE.BoxGeometry(1, 1, 1);
     this.ringGeo = new THREE.RingGeometry(0.86, 1, 64); this.ringGeo.rotateX(-Math.PI / 2);
     this.discGeo = new THREE.CircleGeometry(1, 40); this.discGeo.rotateX(-Math.PI / 2);
     this.cylGeo = new THREE.CylinderGeometry(1, 1, 1, 20, 1, true); this.cylGeo.translate(0, 0.5, 0);
@@ -102,6 +103,24 @@ export class Fx {
     this.balls.push({ m, from: from.clone(), to: to.clone(), t: 0, dur });
   }
 
+  // 矢の軌跡
+  tracer(from, to, big) {
+    const m = new THREE.Mesh(this.boxGeo, new THREE.MeshBasicMaterial({ color: big ? 0xff5030 : 0xffe0a0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    const len = from.distanceTo(to), w = big ? 0.1 : 0.035;
+    m.position.lerpVectors(from, to, 0.5); m.lookAt(to); m.scale.set(w, w, len); this.scene.add(m);
+    this.tracers.push({ m, t: 0, dur: big ? 0.35 : 0.2 });
+  }
+  // 攻撃の予兆：地面に危険範囲を表示する。follow があればその位置と向きに追従
+  zone(kind, o, dur, follow, x = 0, z = 0, yaw = 0) {
+    let geo;
+    if (kind === 'fan') { geo = new THREE.CircleGeometry(o.r, 28, -Math.PI / 2 - o.half, o.half * 2); geo.rotateX(-Math.PI / 2); }
+    else if (kind === 'rect') { geo = new THREE.PlaneGeometry(o.w, o.len); geo.rotateX(-Math.PI / 2); geo.translate(0, 0, o.len / 2); }
+    else { geo = new THREE.CircleGeometry(o.r, 40); geo.rotateX(-Math.PI / 2); }
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xc81a08, transparent: true, opacity: 0.04, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide }));
+    m.position.set(x, 0.07, z); m.rotation.y = yaw; this.scene.add(m);
+    this.zones.push({ m, t: 0, dur, follow, rot: o.rot || 0 });
+  }
+
   number(p, text, cls) {
     const el = document.createElement('div');
     el.className = 'dmg ' + (cls || ''); el.textContent = text;
@@ -153,6 +172,17 @@ export class Fx {
       this.burst(b.m.position, 3, { speed: 1.5, life: 0.5, size: 1.5, color: [1, 0.5, 0.1], color2: [0.6, 0.12, 0.02], gravity: -1, drag: 2 });
       if (f >= 1) { this.scene.remove(b.m); b.m.material.dispose(); this.balls.splice(i, 1); }
     }
+    for (let i = this.tracers.length - 1; i >= 0; i--) {
+      const k = this.tracers[i]; k.t += dt; k.m.material.opacity = sat(1 - k.t / k.dur);
+      if (k.t >= k.dur) { this.scene.remove(k.m); k.m.material.dispose(); this.tracers.splice(i, 1); }
+    }
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      const k = this.zones[i]; k.t += dt;
+      const f = sat(k.t / k.dur);
+      if (k.follow) { k.m.position.set(k.follow.x, 0.07, k.follow.z); k.m.rotation.y = k.follow.yaw + k.rot; }
+      k.m.material.opacity = 0.05 + f * 0.13 + Math.sin(k.t * 26) * 0.02;
+      if (k.t >= k.dur) { this.scene.remove(k.m); k.m.geometry.dispose(); k.m.material.dispose(); this.zones.splice(i, 1); }
+    }
     // ダメージ数字（3D座標を画面に投影）
     const w = innerWidth, h = innerHeight;
     for (let i = this.numbers.length - 1; i >= 0; i--) {
@@ -172,7 +202,9 @@ export class Fx {
     for (const k of this.markers) this.scene.remove(k.m, k.e);
     for (const k of this.pillars) this.scene.remove(k.m);
     for (const b of this.balls) this.scene.remove(b.m);
-    this.rings.length = this.markers.length = this.pillars.length = this.balls.length = 0;
+    for (const k of this.tracers) this.scene.remove(k.m);
+    for (const k of this.zones) this.scene.remove(k.m);
+    this.rings.length = this.markers.length = this.pillars.length = this.balls.length = this.tracers.length = this.zones.length = 0;
     for (const n of this.numbers) n.el.remove(); this.numbers.length = 0;
     this.life.fill(0); this.alpha.fill(0);
   }

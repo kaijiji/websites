@@ -1,6 +1,7 @@
 // 自分のハンター（一人称）と、他プレイヤーの見た目
 import * as THREE from 'three';
-import { PLAYER, ATTACKS, CHARGE, HITZONE, ARENA_R, WEAPONS, SP_GAIN } from './config.js';
+import { PLAYER, ATTACKS, CHARGE, HITZONE, ARENA_R, WEAPONS, SP_GAIN, RANGED } from './config.js';
+export const LOCKS = [null, { name: '頭', i: 0 }, { name: '胴', i: 2 }, { name: '尾', i: 7 }]; // 注目できる部位
 import { clamp, lerp, sat, smooth, easeOut, damp, dampAngle, angDiff, rand, TAU } from './util.js';
 
 export const ST = { free: 0, light1: 1, light2: 2, light3: 3, charge: 4, heavy: 5, counter: 6, dodge: 7, guard: 8, hurt: 9, knock: 10, dead: 11, drink: 12, stunned: 13, bounce: 14, special: 15 };
@@ -63,6 +64,19 @@ function buildHammer(glowMat) {
   box(stone, 0.12, 0.3, 0.3, 0.33, 1.25, 0); box(stone, 0.12, 0.3, 0.3, -0.33, 1.25, 0);
   return g;
 }
+function buildBow(glowMat) {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5a3a26, roughness: 0.8 });
+  const bone = new THREE.MeshStandardMaterial({ color: 0x9a917a, roughness: 0.7, flatShading: true });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x2a2624, roughness: 0.7 });
+  const box = (m, w, h, d, x, y, z, rx = 0) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); o.rotation.x = rx; g.add(o); return o; };
+  box(dark, 0.07, 0.3, 0.08, 0, 0, 0);
+  for (const s of [-1, 1]) { box(wood, 0.055, 0.62, 0.06, 0, s * 0.44, 0.06, s * 0.22); box(bone, 0.05, 0.5, 0.05, 0, s * 0.93, 0.24, s * 0.5); }
+  box(dark, 0.008, 2.28, 0.008, 0, 0, 0.36);                                // 弦
+  box(bone, 0.018, 0.018, 1.25, 0.04, 0.03, -0.25); box(glowMat, 0.035, 0.035, 0.1, 0.04, 0.03, -0.9); // 矢
+  g.scale.setScalar(0.62);
+  return g;
+}
 function buildArm(color) {
   const g = new THREE.Group();
   const cloth = new THREE.MeshStandardMaterial({ color: 0x2c2a2e, roughness: 0.9 });
@@ -80,7 +94,8 @@ export class Player {
     this.glowMat = new THREE.MeshStandardMaterial({ color: 0x331405, emissive: 0xff7a20, emissiveIntensity: 0.6 });
     this.vm = new THREE.Group(); world.vmScene.add(this.vm);
     this.sword = new THREE.Group(); this.sword.scale.setScalar(0.52); this.vm.add(this.sword);
-    this.models = { great: buildSword(this.glowMat), dual: buildDual(this.glowMat), hammer: buildHammer(this.glowMat) };
+    this.models = { great: buildSword(this.glowMat), dual: buildDual(this.glowMat), hammer: buildHammer(this.glowMat), bow: buildBow(this.glowMat) };
+    this.lock = 0;
     for (const k in this.models) this.sword.add(this.models[k]);
     // 双剣の左手
     this.off = new THREE.Group(); this.off.scale.setScalar(0.52); this.off.add(buildDual(this.glowMat)); this.vm.add(this.off);
@@ -115,7 +130,7 @@ export class Player {
     this.weaponId = WEAPONS[id] ? id : 'great';
     const w = (this.w = WEAPONS[this.weaponId]);
     this.defs = {};
-    for (const k in ATTACKS) { const d = ATTACKS[k], hv = k.startsWith('heavy') || k === 'counter'; this.defs[k] = { dur: d.dur / w.speed, hit: d.hit / w.speed, next: d.next / w.speed, mv: d.mv * (hv ? w.heavy : w.mv), reach: d.reach + w.reach, step: d.step, strong: d.mv >= 34 }; }
+    for (const k in ATTACKS) { const d = ATTACKS[k], hv = k.startsWith('heavy') || k === 'counter'; this.defs[k] = { dur: d.dur / w.speed, hit: d.hit / w.speed, next: d.next / w.speed, mv: d.mv * (hv ? w.heavy : w.mv), reach: d.reach + w.reach, step: w.ranged ? 0 : d.step, strong: d.mv >= 34 }; }
     if (w.sp.dur) { const k = w.sp.hit / 0.97; this.defs.special = { ...w.sp, strong: true, k }; } // k: 構えアニメの時間倍率
     this.chargeT = CHARGE.lv.map((v) => v * w.charge); this.chargeOver = CHARGE.over * w.charge;
     for (const k in this.models) this.models[k].visible = k === this.weaponId;
@@ -160,6 +175,14 @@ export class Player {
       const lk = inp.consumeLook(), slow = this.state === 'heavy' || this.state.startsWith('light') ? 0.75 : 1;
       this.yaw -= lk.x * slow; this.pitch = clamp(this.pitch - lk.y * slow, -1.35, 1.4);
     } else inp.consumeLook();
+    // 注目（ロックオン）：選んだ部位へ視点を自動で向ける
+    if (!this.frozen && inp.pressed('lock')) { this.lock = (this.lock + 1) % LOCKS.length; if (this.lock === 3 && boss && boss.tailCut) this.lock = 0; env.popup(this.lock ? '注目：' + LOCKS[this.lock].name : '注目解除', 'warn'); }
+    if (this.lock && boss && boss.active && !boss.dead && this.state !== 'dead') {
+      let s = boss.spheres[LOCKS[this.lock].i]; if (!s.on) s = boss.spheres[2];
+      const dx = s.pos.x - this.x, dz = s.pos.z - this.z, d = Math.hypot(dx, dz);
+      this.yaw = dampAngle(this.yaw, Math.atan2(dx, dz), 11, dt);
+      this.pitch = damp(this.pitch, clamp(Math.atan2(s.pos.y - (this.tp ? 2.0 : PLAYER.eye), Math.max(d, 1.2)), -1.2, 1.3), 11, dt);
+    }
 
     const sinY = Math.sin(this.yaw), cosY = Math.cos(this.yaw);
     let mx = inp.move.x, my = inp.move.y;
@@ -293,28 +316,37 @@ export class Player {
 
   resolveAttack(boss) {
     const { def, name, mvBonus } = this.atk, env = this.env;
+    const ranged = this.w.ranged;
     V.set(this.x, this.eyeY, this.z); this.lookDir(V2);
-    if (this.tp) { const c = this.world.camera.position; V2.multiplyScalar(11).add(c).sub(V).normalize(); } // 三人称では照準の先を狙う
-    const hit = boss && boss.active && !boss.dead ? boss.queryHit(V, V2, def.reach, name === 'special' ? 0.75 : name.startsWith('light') ? 0.52 : 0.44) : null;
+    if (this.tp && ranged) V.copy(this.world.camera.position); // 弓は三人称では画面の照準どおりに飛ぶ
+    else if (this.tp) { const c = this.world.camera.position; V2.multiplyScalar(11).add(c).sub(V).normalize(); } // 三人称では照準の先を狙う
+    const hit = boss && boss.active && !boss.dead ? boss.queryHit(V, V2, ranged ? RANGED.reach : def.reach, ranged ? 0.03 : name === 'special' ? 0.75 : name.startsWith('light') ? 0.52 : 0.44) : null;
     if (name === 'special' && this.w.blunt) { // 砕岩衝：外しても地面を割る
       const gp = new THREE.Vector3(this.x + Math.sin(this.yaw) * 2.4, 0.2, this.z + Math.cos(this.yaw) * 2.4);
       env.fx.dust(gp, 50, 11); env.fx.ring(gp.x, gp.z, 0, 22, 9, 0xffd9a0); env.audio.play('slam', 1.1); this.world.addShake(0.8);
       env.fx.burst(gp, 40, { speed: 13, life: 0.9, size: 0.5, color: [0.6, 0.55, 0.5], gravity: 16, dir: [0, 1, 0], spread: 0.8 });
     }
+    if (ranged) {
+      const from = new THREE.Vector3(this.x - Math.cos(this.yaw) * 0.25, this.eyeY - 0.22, this.z + Math.sin(this.yaw) * 0.25).addScaledVector(V2, 1.6);
+      const to = hit ? hit.point : new THREE.Vector3().copy(V2).multiplyScalar(RANGED.reach).add(V);
+      env.fx.tracer(from, to, name === 'special'); env.audio.play('dodge', name === 'special' ? 1.6 : 0.9); if (name === 'special') env.audio.play('bounce', 0.7);
+    }
     if (!hit) return;
+    const hd = Math.hypot(hit.point.x - this.x, hit.point.z - this.z), rangeMul = !ranged || (hd >= RANGED.near && hd <= RANGED.far) ? 1 : RANGED.off;
     const blunt = this.w.blunt, hz = blunt && hit.part === 'back' ? 0.7 : HITZONE[hit.part], strong = def.strong, weak = hit.part === 'head';
-    const dmg = Math.max(1, Math.round(def.mv * mvBonus * hz * (this.buffT > 0 ? 1.25 : 1) * (this.oniT > 0 ? 1.2 : 1) * rand(0.95, 1.05)));
+    const dmg = Math.max(1, Math.round(def.mv * mvBonus * hz * (this.buffT > 0 ? 1.25 : 1) * (this.oniT > 0 ? 1.2 : 1) * rangeMul * rand(0.95, 1.05)));
     if (name !== 'special' && this.oniT <= 0) this.sp = Math.min(100, this.sp + dmg * SP_GAIN.perDmg);
     this.stats.dmg += dmg; this.stats.hits++; if (weak) this.stats.weak++; this.stats.maxHit = Math.max(this.stats.maxHit, dmg);
     if (hit.part === 'back' && !blunt) { // 硬い背甲には弾かれる
       env.fx.metalSpark(hit.point); env.audio.play('bounce', 1); env.fx.number(hit.point, String(dmg), 'dull');
       this.world.addShake(0.25); this.setState('bounce'); env.popup('弾かれた！', 'warn');
     } else {
-      env.fx.hitSpark(hit.point, strong, weak); env.audio.play(strong ? 'hitHeavy' : 'hit', 1); if (weak) env.audio.play('weak', 1);
+      env.fx.hitSpark(hit.point, strong && !ranged, weak); env.audio.play(strong ? 'hitHeavy' : 'hit', 1); if (weak) env.audio.play('weak', 1);
       env.fx.number(hit.point, String(dmg), weak ? 'weak' : strong ? 'strong' : '');
-      this.hitstop = strong ? 0.13 : 0.06; this.world.addShake(strong ? 0.5 : 0.22);
+      this.hitstop = ranged ? 0 : strong ? 0.13 : 0.06; this.world.addShake(ranged ? 0.08 : strong ? 0.5 : 0.22);
+      if (ranged && rangeMul < 1) env.popup(hd < RANGED.near ? '近すぎる' : '遠すぎる', 'warn');
       if (name === 'heavy3') { this.world.addShake(0.35); env.flash('impact'); }
-      if (name === 'special') { this.hitstop = 0.22; this.world.addShake(0.7); env.flash('impact'); env.fx.hitSpark(hit.point, true, true); env.audio.play('crack', 0.8); }
+      if (name === 'special') { this.hitstop = ranged ? 0.05 : 0.22; this.world.addShake(0.7); env.flash('impact'); env.fx.hitSpark(hit.point, !ranged, true); env.audio.play('crack', 0.8); }
     }
     boss.hitFlash = 1;
     env.dealHit(hit.part, dmg, hit.point, strong, weak, blunt, name === 'special' ? def.stun || 0 : 0);
@@ -415,7 +447,15 @@ export class Player {
     const s = this.state, t = this.st, T = this.poseT, time = this.world.time;
     let k = 16;
     this.flask.visible = false;
-    if (s === 'special') { sampleKeys(KEYS.special, t / this.atk.def.k, T); if (t < this.atk.def.hit - 0.1) { T[0] += rand(-0.008, 0.008); T[1] += rand(-0.008, 0.008); } k = 50; }
+    const atkS = !!KEYS[s] || s === 'special';
+    if (this.w.ranged && (atkS || s === 'charge' || (s === 'free' && !this.guarding))) { // 弓の構え
+      const draw = s === 'charge' ? 0.5 + this.chargeLv * 0.17 : s === 'special' ? sat(t / this.atk.def.hit) * (t < this.atk.def.hit ? 1 : 0) : 0, kick = atkS && s !== 'special' ? 1 - sat(t / 0.16) : s === 'special' && t >= this.atk.def.hit ? 1 - sat((t - this.atk.def.hit) / 0.2) : 0;
+      const up = atkS || s === 'charge' ? 1 : 0, tr = draw * 0.004;
+      T[0] = lerp(0.4, 0.24, up) + rand(-tr, tr); T[1] = lerp(-0.34, -0.14, up) + rand(-tr, tr); T[2] = lerp(-0.6, -0.56, up) + draw * 0.07 + kick * 0.06; T[3] = lerp(-0.3, 0, up) + kick * 0.12; T[4] = lerp(0.3, -0.12, up); T[5] = lerp(0.5, 0.1, up); k = 22;
+      this.models.bow.children[this.models.bow.children.length - 2].position.z = -0.25 + draw * 0.35; this.models.bow.children[this.models.bow.children.length - 1].position.z = -0.9 + draw * 0.35;
+      this.models.bow.children[this.models.bow.children.length - 2].visible = this.models.bow.children[this.models.bow.children.length - 1].visible = !(atkS && kick < 1 && t > 0.02 && s !== 'special') && !(s === 'special' && t >= this.atk.def.hit);
+    }
+    else if (s === 'special') { sampleKeys(KEYS.special, t / this.atk.def.k, T); if (t < this.atk.def.hit - 0.1) { T[0] += rand(-0.008, 0.008); T[1] += rand(-0.008, 0.008); } k = 50; }
     else if (KEYS[s]) { sampleKeys(KEYS[s], t * this.w.speed, T); k = 60; }
     else if (s === 'charge') {
       const lv = this.chargeLv, tr = 0.004 + lv * 0.004;
@@ -444,12 +484,12 @@ export class Player {
     // 光：溜め段階・見切りバフ
     const lv = s === 'charge' ? this.chargeLv : 0;
     const target = 0.5 + lv * 2.2 + (this.buffT > 0 ? 1.6 + Math.sin(time * 9) * 0.4 : 0) + (this.counterT > 0 ? 3 : 0) + (s === 'heavy' ? 3 : 0) + (s === 'special' ? 6 : 0) + (this.oniT > 0 ? 2.5 + Math.sin(time * 14) * 0.6 : 0) + (this.sp >= 100 ? 0.8 + Math.sin(time * 5) * 0.4 : 0);
-    this.glowMat.emissiveIntensity = damp(this.glowMat.emissiveIntensity, target, 12, dt);
+    this.glowMat.emissiveIntensity = damp(this.glowMat.emissiveIntensity, this.w.ranged ? Math.min(target, 2.2) : target, 12, dt);
     this.glowMat.emissive.setHex(this.oniT > 0 || s === 'special' ? 0xff2a2a : this.counterT > 0 ? 0x7ac8ff : this.buffT > 0 ? 0xffe070 : lv >= 3 ? 0xff4020 : 0xff7a20);
     this.world.vmGlow.intensity = (lv * 1.2 + (s === 'heavy' ? 2 : 0) + (this.counterT > 0 ? 1.5 : 0)) * 0.8;
     this.world.vmGlow.color.setHex(this.counterT > 0 ? 0x7ac8ff : 0xffa040);
     // 軌跡
-    const atk = this.atk, swinging = atk && (s === atk.name || (s === 'heavy' && atk.name.startsWith('heavy'))) && t > atk.def.hit - 0.12 && t < atk.def.hit + 0.13;
+    const atk = this.atk, swinging = !this.w.ranged && atk && (s === atk.name || (s === 'heavy' && atk.name.startsWith('heavy'))) && t > atk.def.hit - 0.12 && t < atk.def.hit + 0.13;
     this.sword.updateMatrixWorld(true);
     if (swinging) {
       const tip = new THREE.Vector3(-0.02, this.w.tip, 0).applyMatrix4(this.sword.matrixWorld), base = new THREE.Vector3(0, this.w.base, 0).applyMatrix4(this.sword.matrixWorld);
@@ -479,7 +519,7 @@ export class Player {
 const STN = Object.keys(ST);
 export class Avatar {
   constructor(scene, name, color, weapon = 'great') {
-    this.scene = scene; this.name = name; this.color = color; this.wid = weapon; this.dual = weapon === 'dual'; this.k = 13;
+    this.scene = scene; this.name = name; this.color = color; this.wid = weapon; this.dual = weapon === 'dual'; this.ranged = weapon === 'bow'; this.k = 13;
     const g = (this.g = new THREE.Group());
     const armor = new THREE.MeshStandardMaterial({ color: 0x6b6660, roughness: 0.5, metalness: 0.55, flatShading: true });
     const cloth = new THREE.MeshStandardMaterial({ color: 0x2c2a2e, roughness: 0.9 });
@@ -500,7 +540,8 @@ export class Avatar {
     this.armL = piv(this.torso, 0.34, 0.58, 0); box(this.armL, cloth, 0.14, 0.6, 0.15, 0, -0.3, 0);
     this.armR = piv(this.torso, -0.34, 0.58, 0); box(this.armR, cloth, 0.14, 0.6, 0.15, 0, -0.3, 0); box(this.armR, armor, 0.16, 0.24, 0.17, 0, -0.48, 0);
     this.swordG = piv(this.armR, 0, -0.6, 0.05); this.swordG.rotation.x = Math.PI / 2;
-    if (weapon === 'hammer') { box(this.swordG, cloth, 0.06, 1.4, 0.06, 0, 0.6, 0); box(this.swordG, armor, 0.52, 0.34, 0.34, 0, 1.3, 0); box(this.swordG, steel, 0.54, 0.08, 0.36, 0, 1.3, 0); }
+    if (weapon === 'bow') { box(this.swordG, cloth, 0.05, 1.5, 0.07, 0, 0.1, 0); box(this.swordG, steel, 0.015, 1.4, 0.015, 0, 0.1, -0.16); }
+    else if (weapon === 'hammer') { box(this.swordG, cloth, 0.06, 1.4, 0.06, 0, 0.6, 0); box(this.swordG, armor, 0.52, 0.34, 0.34, 0, 1.3, 0); box(this.swordG, steel, 0.54, 0.08, 0.36, 0, 1.3, 0); }
     else if (weapon === 'dual') {
       this.sword2 = piv(this.armL, 0, -0.6, 0.05); this.sword2.rotation.x = Math.PI / 2 - 0.9;
       for (const sg of [this.swordG, this.sword2]) { box(sg, steel, 0.11, 0.85, 0.035, 0, 0.58, 0); box(sg, armor, 0.26, 0.06, 0.07, 0, 0.14, 0); box(sg, cloth, 0.05, 0.26, 0.05, 0, 0, 0); }
@@ -547,6 +588,7 @@ export class Avatar {
     else if (s === 'hurt' || s === 'bounce') { torsoX = -0.3; }
     else if (s === 'stunned') { torsoX = 0.5; armX = -2.2; armLX = -2.2; }
     else if (s === 'knock' || s === 'dead') { bx = -Math.PI / 2 * easeOut(sat(t / 0.4)) * (s === 'knock' ? 1 - smooth(sat((t - 0.9) / 0.35)) : 1); by = 0.25 * sat(t / 0.4); legA = 0; }
+    if (this.ranged && (s.startsWith('light') || s === 'heavy' || s === 'charge' || s === 'counter' || s === 'special')) { armX = -1.5; armZ = 0; swX = 0; torsoX = 0; glow = s === 'charge' ? this.lv : 0; }
     this.bodyG.rotation.x = bx; this.bodyG.position.y = by + Math.abs(Math.sin(this.run)) * 0.05 * mv;
     this.torso.rotation.x = damp(this.torso.rotation.x, torsoX, 16, dt);
     this.headG.rotation.x = clamp(-this.pitch * 0.6, -0.6, 0.6);

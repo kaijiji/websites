@@ -139,6 +139,8 @@ function buildModel(b) {
 
 // ---------------------------------------------------------------- 攻撃ごとの定義
 // pose: 姿勢 / move: ホストでの移動 / cues: 全員で鳴らす演出 / host: ホストだけが行う処理 / hits: 攻撃判定
+// 予兆：地面の危険範囲と警告音
+const tele = (b, kind, o, dur, follow = true, x, z) => { b.env.fx.zone(kind, o, dur, follow ? b : null, x ?? b.x, z ?? b.z, b.yaw); b.env.audio.play('warn', 0.7, b.distLocal()); };
 const A = {};
 A.idle = { dur: Infinity, pose() {} };
 
@@ -173,7 +175,7 @@ A.bite = {
     P.neckYaw = Math.sin(t * 5) * 0.08 * w * (1 - l);
   },
   move(b, t, dt) { if (t > 0.64 && t < 0.82) b.advance(13 * dt); },
-  cues: [[0.02, (b) => b.env.audio.play('snarl', 0.8, b.distLocal())], [0.66, (b) => b.env.audio.play('swingHeavy', 1, b.distLocal())], [0.82, (b) => { b.env.audio.play('guard', 0.6, b.distLocal()); }]],
+  cues: [[0.0, (b) => tele(b, 'fan', { r: 9.5, half: 0.4 }, 0.72)], [0.02, (b) => b.env.audio.play('snarl', 0.8, b.distLocal())], [0.66, (b) => b.env.audio.play('swingHeavy', 1, b.distLocal())], [0.82, (b) => { b.env.audio.play('guard', 0.6, b.distLocal()); }]],
   hits(b, t, out) { if (t > 0.66 && t < 0.9) { const s = b.spheres[0].pos; out.push({ id: 'b', kind: 'sphere', x: s.x, y: s.y, z: s.z, r: 1.95, dmg: 25, kb: 7, parryFlinch: true }); } },
 };
 
@@ -190,7 +192,7 @@ A.claw = { // ap[0] = 左右 (+1/-1), ap[1] = 連撃なら1（予備動作が短
     P.neckYaw = -0.3 * s * w * (1 - rc); P.jaw = 0.4 * w * (1 - rc);
   },
   move(b, t, dt) { t = A.claw.time(b, t); if (t > 0.58 && t < 0.8) b.advance(8 * dt); },
-  cues: [[0.36, (b) => b.env.audio.play('swingHeavy', 1, b.distLocal())], [0.6, (b) => { b.fwd(V, 3.2); V.y = 0.2; b.env.fx.dust(V, 20, 7); b.env.audio.play('step', 1, b.distLocal()); b.env.shake(0.35, b.x, b.z, 22); }]],
+  cues: [[0.0, (b) => tele(b, 'fan', { r: 7.2, half: 1.3, rot: -(b.ap[0] || 1) * 0.25 }, b.ap[1] ? 0.4 : 0.62)], [0.36, (b) => b.env.audio.play('swingHeavy', 1, b.distLocal())], [0.6, (b) => { b.fwd(V, 3.2); V.y = 0.2; b.env.fx.dust(V, 20, 7); b.env.audio.play('step', 1, b.distLocal()); b.env.shake(0.35, b.x, b.z, 22); }]],
   hits(b, t, out) {
     t = A.claw.time(b, t);
     if (t > 0.6 && t < 0.86) out.push({ id: 'c', kind: 'arc', x: b.x + Math.sin(b.yaw) * 1.0, z: b.z + Math.cos(b.yaw) * 1.0, r: 6.2, ang: b.yaw - (b.ap[0] || 1) * 0.25, half: 1.3, dmg: 23, kb: 8, parryFlinch: true });
@@ -206,7 +208,7 @@ A.tailspin = { // ap[0] = 回転方向
     P.tailPitch = 0.05 + 0.02 * w; P.tailWave = 1 - w * (1 - rc);
     P.neckYaw = -0.8 * s * w * (1 - sp); P.headYaw = -0.4 * s * w * (1 - sp); P.bodyRoll = -0.14 * s * Math.sin(sp * Math.PI);
   },
-  cues: [[0.05, (b) => b.env.audio.play('snarl', 0.7, b.distLocal())], [0.82, (b) => b.env.audio.play('swingHeavy', 1.4, b.distLocal())], [1.15, (b) => b.env.audio.play('swingHeavy', 1.2, b.distLocal())]],
+  cues: [[0.0, (b) => tele(b, 'circle', { r: b.tailCut ? 7.4 : 11.6 }, 0.85)], [0.05, (b) => b.env.audio.play('snarl', 0.7, b.distLocal())], [0.82, (b) => b.env.audio.play('swingHeavy', 1.4, b.distLocal())], [1.15, (b) => b.env.audio.play('swingHeavy', 1.2, b.distLocal())]],
   frame(b, t) { if (t > 0.8 && t < 1.55) { const s = b.spheres[b.tailCut ? 7 : 9].pos; V.set(s.x, 0.15, s.z); b.env.fx.dust(V, 2, 5); } },
   hits(b, t, out) {
     if (t > 0.8 && t < 1.57) {
@@ -240,7 +242,7 @@ A.charge = {
       if (dx * Math.sin(b.yaw) + dz * Math.cos(b.yaw) < -7 && t > 1.6) return b.start('skid');
     }
   },
-  cues: [[0.05, (b) => b.env.audio.play('snarl', 1, b.distLocal())], [0.3, (b) => b.pawFx()], [0.62, (b) => b.pawFx()], [0.98, (b) => b.env.audio.play('roar', 0.5, b.distLocal())]],
+  cues: [[0.0, (b) => tele(b, 'rect', { w: 5.4, len: 38 }, 1.05)], [0.05, (b) => b.env.audio.play('snarl', 1, b.distLocal())], [0.3, (b) => b.pawFx()], [0.62, (b) => b.pawFx()], [0.98, (b) => b.env.audio.play('roar', 0.5, b.distLocal())]],
   hits(b, t, out) {
     if (t > 1.05) {
       const h = b.spheres[0].pos, c = b.spheres[2].pos;
@@ -287,7 +289,7 @@ A.leap = { // ap = [着地点x, 着地点z, 出発x, 出発z]
       b.x = x; b.z = z; b.y = Math.sin(f * Math.PI) * 7.5;
     } else b.y = 0;
   },
-  cues: [[0.0, (b) => b.env.audio.play('snarl', 0.9, b.distLocal())], [0.88, (b) => { b.env.audio.play('swingHeavy', 1.5, b.distLocal()); V.set(b.x, 0.2, b.z); b.env.fx.dust(V, 30, 8); b.env.shake(0.3, b.x, b.z, 25); }],
+  cues: [[0.0, (b) => b.env.audio.play('snarl', 0.9, b.distLocal())], [0.82, (b) => tele(b, 'circle', { r: 4.6 }, 0.93, false, b.ap[0], b.ap[1])], [0.88, (b) => { b.env.audio.play('swingHeavy', 1.5, b.distLocal()); V.set(b.x, 0.2, b.z); b.env.fx.dust(V, 30, 8); b.env.shake(0.3, b.x, b.z, 25); }],
     [1.75, (b) => { b.env.audio.play('slam', 1.4, b.distLocal()); b.env.shake(1.1, b.x, b.z, 55); V.set(b.x, 0.3, b.z); b.env.fx.dust(V, 70, 13); b.env.fx.burst(V, 60, { speed: 16, life: 0.9, size: 0.6, color: [1, 0.5, 0.1], color2: [1, 0.2, 0.05], dir: [0, 0.8, 0], spread: 1, gravity: 18, jitter: 4 }); }]],
   host: [[1.75, (b) => b.emit({ k: 'ring', x: b.x, z: b.z, sp: 17, r: 17, dmg: 20 })]],
   hits(b, t, out) { if (t > 1.72 && t < 1.86) out.push({ id: 'l', kind: 'circle', x: b.x, z: b.z, r: 4.6, dmg: 44, kb: 13, heavy: true }); },
@@ -305,7 +307,7 @@ A.breath = { // ap[0] = 薙ぎ払う向き
     P.bodyYaw = sw * 0.25; P.neckYaw = sw * 0.5; P.headYaw = sw * 0.25; P.bodyY = 0.3 * inh * (1 - fire) - 0.3 * fire; P.bodyPitch = -0.1 * inh * (1 - fire) + 0.08 * fire;
     P.glow = Math.max(inh, fire) * (1 - rc); P.headRoll = fire * Math.sin(t * 40) * 0.02;
   },
-  cues: [[0.02, (b) => b.env.audio.play('fireball', 1.2, b.distLocal())], [1.0, (b) => b.env.audio.play('roar', 0.45, b.distLocal())]],
+  cues: [[0.0, (b) => tele(b, 'fan', { r: 20, half: 1.25 }, 1.08)], [0.02, (b) => b.env.audio.play('fireball', 1.2, b.distLocal())], [1.0, (b) => b.env.audio.play('roar', 0.45, b.distLocal())]],
   frame(b, t, dt) {
     const m = b.mouth.getWorldPosition(V);
     if (t < 0.95) { // 吸い込み

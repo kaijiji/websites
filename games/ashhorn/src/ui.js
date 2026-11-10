@@ -1,6 +1,10 @@
 // HUD とメニュー（DOM）
 import { PLAYER, PLAYER_COLORS, STAMPS, CARTS, RANKS, MAX_PLAYERS, WEAPONS, WEAPON_IDS } from './config.js';
 import { fmtTime, sat, store } from './util.js';
+import { Vector3 } from 'three';
+import { LOCKS } from './player.js';
+const ACT_NAMES = { bite: '噛みつき', claw: 'ひっかき', tailspin: '尻尾回転', charge: '突進', leap: '跳びかかり', breath: '火炎ブレス', fireballs: '火球', eruption: '噴火', roar: '咆哮', crash: '角が刺さった！', topple: '転倒中', stunned: '気絶中', skid: '隙あり' };
+const _lv = new Vector3();
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -41,6 +45,7 @@ export class UI {
     const tap = (id, fn) => { const el = $(id); const h = (e) => { e.stopPropagation(); e.preventDefault(); fn(); }; el.addEventListener('touchstart', h, { passive: false }); el.addEventListener('click', h); };
     tap('tbPause', () => g.pause());
     tap('tbView', () => g.toggleView());
+    tap('tbLock', () => { g.input._pressed.lock = true; });
     tap('tbStamp', () => $('stampMenu').classList.toggle('hidden'));
     STAMPS.forEach((s, i) => { const b = document.createElement('button'); b.textContent = s; const h = (e) => { e.stopPropagation(); e.preventDefault(); g.sendStamp(i); $('stampMenu').classList.add('hidden'); }; b.addEventListener('touchstart', h, { passive: false }); b.addEventListener('click', h); $('stampMenu').appendChild(b); });
     // 設定
@@ -50,6 +55,7 @@ export class UI {
     bindRange('oVol', 'vol', (v) => Math.round(v * 100), () => g.applySettings());
     bindRange('oMus', 'music', (v) => Math.round(v * 100), () => g.applySettings());
     $('oInv').checked = s.invertY; $('oInv').addEventListener('change', () => { s.invertY = $('oInv').checked; g.applySettings(); g.saveSettings(); });
+    $('oLock').checked = s.autoLock; $('oLock').addEventListener('change', () => { s.autoLock = $('oLock').checked; g.player.lock = s.autoLock ? 2 : 0; g.saveSettings(); });
     $('oView').value = s.view; $('oView').addEventListener('change', () => { s.view = $('oView').value; g.player.tp = s.view === 'tp'; g.saveSettings(); });
     for (const id of ['wpnTitle', 'wpnLobby']) for (const w of WEAPON_IDS) { const b = document.createElement('button'); b.dataset.w = w; b.innerHTML = `${WEAPONS[w].name}<small>${WEAPONS[w].sub}</small>`; b.addEventListener('click', () => { g.audio.init(); g.audio.play('ui'); g.setWeapon(w); }); $(id).appendChild(b); }
     this.renderWeapons();
@@ -136,6 +142,15 @@ export class UI {
     $('mHorn').classList.toggle('done', boss.hornBroken); $('mHorn').textContent = boss.hornBroken ? '角 破壊' : '角';
     $('mTail').classList.toggle('done', boss.tailCut); $('mTail').textContent = boss.tailCut ? '尾 切断' : '尾';
     $('mRage').classList.toggle('hidden', boss.phase < 2); $('mRage').classList.add('rage'); $('mRage').textContent = boss.phase >= 3 ? '激昂・極' : '激昂';
+    const an = boss.active && !boss.dead ? ACT_NAMES[boss.action] || '' : '';
+    if (an !== this._an) { this._an = an; $('bossAct').textContent = an; $('bossAct').className = /！|中|隙/.test(an) ? 'open' : ''; }
+    // 注目マーク
+    const lm = $('lockMark');
+    if (p.lock && boss.active && !boss.dead) {
+      let s = boss.spheres[LOCKS[p.lock].i]; if (!s.on) s = boss.spheres[2];
+      _lv.copy(s.pos).project(this.g.world.camera);
+      if (_lv.z < 1) { lm.style.display = 'block'; lm.style.transform = `translate(${((_lv.x * 0.5 + 0.5) * innerWidth).toFixed(0)}px,${((-_lv.y * 0.5 + 0.5) * innerHeight).toFixed(0)}px) translate(-50%,-50%) rotate(45deg)`; } else lm.style.display = 'none';
+    } else lm.style.display = 'none';
     $('timer').textContent = fmtTime(time);
     $('carts').innerHTML = `残り <b>${'◆'.repeat(Math.max(0, carts))}${'◇'.repeat(Math.max(0, CARTS - carts))}</b>`;
     // 仲間

@@ -19,7 +19,7 @@ class Game {
     const canvas = $('c');
     this.input = new Input(canvas, $('touch'));
     if (this.input.isTouch) document.body.classList.add('touch');
-    const def = { sens: 1, invertY: false, vol: 0.8, music: 0.55, quality: this.input.isTouch ? 'mid' : 'high', qualityAuto: true, weapon: 'great', view: 'fp' };
+    const def = { sens: 1, invertY: false, vol: 0.8, music: 0.55, quality: this.input.isTouch ? 'mid' : 'high', qualityAuto: true, weapon: 'great', view: 'fp', autoLock: false };
     this.settings = Object.assign(def, store.get('ashhorn.settings', {}));
     if (!WEAPONS[this.settings.weapon]) this.settings.weapon = 'great';
     this.world = new World(canvas, this.settings.quality);
@@ -154,7 +154,7 @@ class Game {
     this.boss.reset(n); this.rage = 0; this.audio.setIntensity(0);
     const idx = Math.max(0, this.roster.findIndex((r) => r.id === this.myId));
     const mine = this.roster[idx] || {};
-    this.player.setWeapon(mine.w || this.settings.weapon); this.player.tp = this.settings.view === 'tp';
+    this.player.setWeapon(mine.w || this.settings.weapon); this.player.tp = this.settings.view === 'tp'; this.player.lock = this.settings.autoLock ? 2 : 0;
     this.player.reset(idx, this.roster.length); this.player.setColor(PLAYER_COLORS[this.myId % 4]);
     this.selfAvatar = new Avatar(this.world.scene, '', PLAYER_COLORS[this.myId % 4], this.player.weaponId); // 三人称用の自分の姿
     this.selfAvatar.label.visible = false; this.selfAvatar.k = 70; this.selfAvatar.g.visible = false;

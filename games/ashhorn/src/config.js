@@ -32,9 +32,12 @@ export const WEAPONS = {
     sp: { name: '鬼人化', desc: '14秒間、攻撃が速く強くなり、回避のスタミナ消費が半分になる。', oni: 14 } },
   hammer: { name: '戦槌', sub: '砕岩', desc: '遅いが高威力。頭を殴り続けると気絶させられ、硬い背中にも弾かれない。尻尾は切れない。', speed: 0.8, mv: 1.25, heavy: 1.25, reach: 0.1, walk: 0.93, dodgeCost: 24, guardRate: 0.3, charge: 1.15, buff: 8, blunt: true, tip: 1.5, base: 1.05,
     sp: { name: '砕岩衝', desc: '大地ごと叩き割る一撃。どこに当てても気絶値が大きくたまる。', dur: 1.5, hit: 0.85, next: 1.2, mv: 210, reach: 4.8, step: 2.2, stun: 500 } },
+  bow: { name: '弓', sub: '灰羽', desc: '離れて射る遠距離武器。溜めるほど強く、適正距離（8〜22m）で威力が上がる。ガードは弱い。', speed: 1, mv: 0.55, heavy: 0.8, reach: 0, walk: 1.05, dodgeCost: 18, guardRate: 0.6, charge: 0.9, buff: 8, blunt: false, ranged: true, tip: 1, base: 0.5,
+    sp: { name: '穿ち矢', desc: '力を込めた渾身の一矢。遠くからでも大ダメージ。', dur: 1.4, hit: 0.9, next: 1.1, mv: 240, reach: 0, step: 0 } },
 };
+export const RANGED = { reach: 70, near: 8, far: 22, off: 0.7 }; // 弓の射程と適正距離（外れると威力0.7倍）
 export const SP_GAIN = { perDmg: 0.08, just: 15, parry: 15 }; // 奥義ゲージ（100で発動可）のたまり方
-export const WEAPON_IDS = ['great', 'dual', 'hammer'];
+export const WEAPON_IDS = ['great', 'dual', 'hammer', 'bow'];
 export const CHARGE = { start: 0.2, lv: [0.55, 1.15, 1.75], over: 2.7 };
 
 // 肉質（部位ごとのダメージ倍率）

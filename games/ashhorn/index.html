@@ -54,6 +54,8 @@ input,select{font:inherit;color:inherit}
 #bossMeta{margin-top:6px;display:flex;justify-content:center;gap:8px;font-size:10px;font-weight:700;letter-spacing:.1em}
 #bossMeta span{padding:1px 8px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.5);color:var(--dim)}
 #bossMeta span.done{color:var(--gold);border-color:var(--gold)}#bossMeta span.rage{color:#ff5a3a;border-color:#ff5a3a}
+#bossAct{margin-top:7px;font-weight:900;font-size:clamp(13px,1.7vw,18px);letter-spacing:.2em;color:#ff8a5a;text-shadow:0 0 10px rgba(255,60,20,.8),0 2px 4px #000;min-height:1.3em}#bossAct.open{color:#8fe08a;text-shadow:0 0 10px rgba(80,220,100,.7),0 2px 4px #000}
+#lockMark{position:absolute;left:0;top:0;width:26px;height:26px;border:2px solid #ffd24a;box-shadow:0 0 8px rgba(255,200,60,.9);display:none;pointer-events:none}
 #quest{position:absolute;right:max(18px,env(safe-area-inset-right));top:max(16px,env(safe-area-inset-top));text-align:right;text-shadow:0 1px 4px #000}
 #timer{font-family:var(--serif);font-weight:800;font-size:clamp(18px,2.4vw,26px);letter-spacing:.06em;font-variant-numeric:tabular-nums}
 #carts{font-size:12px;font-weight:700;color:var(--dim);margin-top:2px}#carts b{color:var(--gold);letter-spacing:.25em}
@@ -113,6 +115,7 @@ body.touch .item{width:44px;height:44px}
 #tbPause{right:max(14px,env(safe-area-inset-right));top:74px;width:40px;height:40px;font-size:15px}
 #tbStamp{right:calc(max(14px,env(safe-area-inset-right)) + 48px);top:74px;width:40px;height:40px;font-size:11px}
 #tbView{right:calc(max(14px,env(safe-area-inset-right)) + 96px);top:74px;width:40px;height:40px;font-size:11px}
+#tbLock{right:calc(max(14px,env(safe-area-inset-right)) + 144px);top:74px;width:40px;height:40px;font-size:11px}
 #stampMenu{position:absolute;right:max(14px,env(safe-area-inset-right));top:122px;display:flex;flex-direction:column;gap:6px;pointer-events:auto}
 #stampMenu button{padding:9px 14px;background:rgba(10,6,5,.85);border:1px solid var(--line);font-weight:700;font-size:13px}
 #rotate{position:fixed;inset:0;background:var(--ink);z-index:50;display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;font-weight:700;text-align:center;padding:30px}
@@ -139,7 +142,7 @@ label.f{display:block;font-size:11px;font-weight:700;letter-spacing:.15em;color:
 .btn:hover,.btn:focus-visible{background:rgba(255,106,42,.22);border-color:var(--ember);padding-left:28px;outline:none}
 .btn.primary{background:linear-gradient(90deg,rgba(255,106,42,.5),rgba(255,106,42,.12));border-color:var(--ember)}
 .btn.sm{padding:9px 16px;font-size:13px}.btn:disabled{opacity:.4;pointer-events:none}
-.wpn{display:flex;gap:6px}.wpn button{flex:1;padding:8px 4px;border:1px solid var(--line);background:rgba(0,0,0,.5);font-weight:900;font-size:15px;letter-spacing:.1em;transition:all .15s}.wpn button small{display:block;font-size:10px;font-weight:500;color:var(--dim);letter-spacing:.2em}
+.wpn{display:flex;gap:6px}.wpn button{flex:1;padding:8px 2px;border:1px solid var(--line);background:rgba(0,0,0,.5);font-weight:900;font-size:15px;letter-spacing:.1em;transition:all .15s}.wpn button small{display:block;font-size:10px;font-weight:500;color:var(--dim);letter-spacing:.2em}
 .wpn button.sel{border-color:var(--ember);background:rgba(255,106,42,.32)}.wdesc{font-size:11px;color:var(--dim);margin:5px 0 10px;min-height:3em;line-height:1.5}
 .row{display:flex;gap:9px}.row>*{flex:1}
 #records{margin-top:16px;font-size:12px;color:var(--dim);line-height:1.9}#records b{color:var(--gold);font-variant-numeric:tabular-nums}
@@ -205,17 +208,18 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
     <div id="bossName">灰角竜 グラヴァルド</div>
     <div class="bar" id="bossBar"><b id="bossLag"></b><b id="bossHp"></b></div>
     <div id="bossMeta"><span id="mHorn">角</span><span id="mTail">尾</span><span id="mRage" class="hidden">激昂</span></div>
+    <div id="bossAct"></div>
   </div>
   <div id="quest"><div id="timer">00:00.00</div><div id="carts"></div><div id="roomTag"></div></div>
   <div id="feed"></div>
   <div id="cross"><svg id="ring" viewBox="0 0 64 64"><circle id="ringBg" cx="32" cy="32" r="26" stroke="rgba(255,255,255,.18)" opacity="0"/><circle id="ringFg" cx="32" cy="32" r="26" stroke="#ff7a2a" stroke-dasharray="163.4" stroke-dashoffset="163.4"/></svg><div id="dot"></div></div>
-  <div id="arrow">◀</div>
+  <div id="arrow">◀</div><div id="lockMark"></div>
   <div id="popups"></div>
   <div id="banner"></div>
   <div id="hint">
     <div><kbd>WASD</kbd>移動 <kbd>Shift</kbd>ダッシュ <kbd>Space</kbd>回避</div>
     <div><kbd>左クリック</kbd>斬る／長押しで溜め <kbd>右クリック</kbd>ガード</div>
-    <div><kbd>R</kbd>奥義 <kbd>E</kbd>回復薬 <kbd>V</kbd>視点切替 <kbd>Esc</kbd>メニュー</div>
+    <div><kbd>R</kbd>奥義 <kbd>E</kbd>回復薬 <kbd>T</kbd>注目 <kbd>V</kbd>視点切替 <kbd>Esc</kbd>メニュー</div>
   </div>
   <div id="stamps"><span>1 ナイス！</span><span>2 回復する！</span><span>3 尻尾を狙おう！</span><span>4 助けて！</span></div>
   <div id="items">
@@ -235,6 +239,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
   <button class="tb" id="tbPause">Ⅱ</button>
   <button class="tb" id="tbStamp">合図</button>
   <button class="tb" id="tbView">視点</button>
+  <button class="tb" id="tbLock">注目</button>
   <div id="stampMenu" class="hidden"></div>
 </div>
 <div id="rotate"><svg viewBox="0 0 24 24" fill="none" stroke="#e8c27a" stroke-width="1.5"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M3 9a9 9 0 0 1 3-5M21 15a9 9 0 0 1-3 5"/></svg>端末を横向きにしてください</div>
@@ -245,7 +250,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
     <div class="wrap">
       <div>
         <h1>灰角<small>ASHHORN</small></h1>
-        <p class="tag">燼の火口に棲む灰角竜を狩れ。<br>武器は3種、視点は一人称と三人称。最大4人の協力狩猟アクション。</p>
+        <p class="tag">燼の火口に棲む灰角竜を狩れ。<br>武器は4種、視点は一人称と三人称。最大4人の協力狩猟アクション。</p>
       </div>
       <div>
         <label class="f" for="name">狩人の名前</label>
@@ -286,6 +291,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
       <dt>Space</dt><dd>回避。<b>攻撃をすり抜けると「見切り」</b>で攻撃力アップ＋スタミナ回復</dd>
       <dt>R</dt><dd><b>奥義</b>。攻撃・見切り・弾き返しで赤いゲージがたまり、満タンで武器ごとの大技を放てる</dd>
       <dt>Shift ／ E</dt><dd>ダッシュ ／ 回復薬（飲む間は無防備）</dd>
+      <dt>T ／ ホイール押し</dt><dd><b>注目（ロックオン）</b>。押すたびに 頭→胴→尾→解除。選んだ部位へ視点が自動で向く</dd>
       <dt>V ／ 1〜4</dt><dd>一人称・三人称の切り替え ／ 仲間への合図</dd>
     </dl>
     <dl class="keys hidden" id="keysTouch">
@@ -295,10 +301,12 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
       <dt>防御</dt><dd><b>当たる直前に押すと「弾き返し」</b>→直後の攻撃がカウンター斬りに</dd>
       <dt>回避</dt><dd><b>攻撃をすり抜けると「見切り」</b>で攻撃力アップ</dd>
       <dt>奥義</dt><dd>赤いゲージが満タンで光る。武器ごとの大技を放つ</dd>
+      <dt>注目</dt><dd>押すたびに 頭→胴→尾→解除。選んだ部位へ視点が自動で向く</dd>
     </dl>
     <div class="tips">
       <b>頭</b>が弱点（視点を上げて狙う）。<b>脚</b>を斬り続けると転倒して頭が下りてくる。<b>背中</b>は硬く弾かれる。<br>
-      武器は3種：<b>大剣</b>（溜め斬り）、<b>双剣</b>（手数と回避）、<b>戦槌</b>（頭を殴って気絶）。<br>
+      武器は4種：<b>大剣</b>（溜め斬り）、<b>双剣</b>（手数と回避）、<b>戦槌</b>（頭を殴って気絶）、<b>弓</b>（遠距離・適正距離8〜22m）。<br>
+      竜の攻撃は<b>地面の赤い範囲</b>と体力バー下の<b>技名</b>で予告される。緑の表示は攻めどき。<br>
       <b>尻尾</b>は切断でき、回転攻撃の範囲が縮む。突進は<b>外周の岩</b>に誘導すると角が刺さって大きな隙になる。<br>
       力尽きてよいのはパーティ全体で<b>2回まで</b>。3回目でクエスト失敗。
     </div>
@@ -311,6 +319,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
     <div class="set"><span>視点感度</span><input type="range" id="oSens" min="0.3" max="2.5" step="0.05"><output id="oSensV"></output></div>
     <div class="set"><span>上下反転</span><label><input type="checkbox" id="oInv"> 反転する</label><span></span></div>
     <div class="set"><span>視点</span><select id="oView"><option value="fp">一人称（迫力重視）</option><option value="tp">三人称（周りが見やすい）</option></select><span></span></div>
+    <div class="set"><span>注目</span><label><input type="checkbox" id="oLock"> 開始時から自動で竜の方を向く</label><span></span></div>
     <div class="set"><span>画質</span><select id="oQual"><option value="high">高（影・発光あり）</option><option value="mid">中（発光あり）</option><option value="low">低（軽量）</option></select><span></span></div>
     <div class="set"><span>音量</span><input type="range" id="oVol" min="0" max="1" step="0.05"><output id="oVolV"></output></div>
     <div class="set"><span>BGM</span><input type="range" id="oMus" min="0" max="1" step="0.05"><output id="oMusV"></output></div>
