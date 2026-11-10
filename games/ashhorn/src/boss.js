@@ -421,7 +421,7 @@ export class Boss {
     this.phase = 1; this.speedMul = 1;
     this.action = 'idle'; this.t = 0; this.seq = 0; this.ap = [0, 0, 0, 0]; this.lastT = 0;
     this.cool = 1.5; this.lastAttack = ''; this.queue = [];
-    this.headAcc = 0; this.legAcc = 0; this.tailAcc = 0; this.headTotal = 0; this.parryAcc = 0; this.flankT = 0; this.headN = 0; this.legN = 0;
+    this.headAcc = 0; this.legAcc = 0; this.tailAcc = 0; this.headTotal = 0; this.parryAcc = 0; this.flankT = 0; this.headN = 0; this.legN = 0; this.stunAcc = 0; this.stunN = 0;
     this.tailCut = false; this.hornBroken = false; this.dead = false; this.pendingRoar = false;
     this.aggro = {}; this.targetId = null; this.eruptCd = 0; this.active = false;
     this.walkPhase = 0; this.hitFlash = 0; this.sx = this.x; this.sz = this.z; this.syaw = 0; this.sy = 0;
@@ -530,13 +530,17 @@ export class Boss {
   }
 
   // ホスト：ダメージを受ける。戻り値は全員へ配るイベントの配列
-  applyHit(part, dmg, attackerId) {
+  applyHit(part, dmg, attackerId, blunt) {
     if (this.dead || !this.active) return;
     this.hp -= dmg;
     this.aggro[attackerId] = (this.aggro[attackerId] || 0) + dmg;
     const sc = this.scale, act = A[this.action], armored = act.armor || this.action === 'flinch';
     if (this.hp <= 0) { this.hp = 0; this.dead = true; this.queue.length = 0; this._hostT = -1; this.start('death'); this.emit({ k: 'dead' }); return; }
     const down = this.action === 'flinch' || this.action === 'topple' || this.action === 'stunned' || this.action === 'crash';
+    if (blunt && part === 'head' && !down) { // 打撃で頭を殴ると気絶値がたまる
+      this.stunAcc += dmg;
+      if (this.stunAcc >= 850 * sc * Math.pow(1.3, this.stunN) && !armored) { this.stunAcc = 0; this.stunN++; this.headTotal += dmg; this.queue.length = 0; this.start('stunned'); this.emit({ k: 'stun', by: attackerId }); return; }
+    }
     if (part === 'head') {
       this.headTotal += dmg; if (!down) this.headAcc += dmg;
       const need = BOSS.headFlinch * sc * Math.pow(1.3, this.headN);
@@ -546,7 +550,7 @@ export class Boss {
       if (!down) this.legAcc += dmg;
       if (this.legAcc >= BOSS.legTopple * sc * Math.pow(1.25, this.legN) && !armored) { this.legAcc = 0; this.legN++; this.queue.length = 0; this.y = 0; this.start('topple', [pick([1, -1])]); this.emit({ k: 'topple', by: attackerId }); }
     } else if (part === 'tail') {
-      this.tailAcc += dmg;
+      if (!blunt) this.tailAcc += dmg;
       if (!this.tailCut && this.tailAcc >= BOSS.tailCut * sc) { this.tailCut = true; this.emit({ k: 'break', p: 'tail', by: attackerId }); if (!armored) { this.queue.length = 0; this._hostT = -1; this.start('flinch', [1]); } }
     }
     const np = this.hp <= this.maxHp * 0.33 ? 3 : this.hp <= this.maxHp * 0.66 ? 2 : 1;

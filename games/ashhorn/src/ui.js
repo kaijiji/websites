@@ -1,5 +1,5 @@
 // HUD とメニュー（DOM）
-import { PLAYER, PLAYER_COLORS, STAMPS, CARTS, RANKS, MAX_PLAYERS } from './config.js';
+import { PLAYER, PLAYER_COLORS, STAMPS, CARTS, RANKS, MAX_PLAYERS, WEAPONS, WEAPON_IDS } from './config.js';
 import { fmtTime, sat, store } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -40,6 +40,7 @@ export class UI {
     // タッチ専用ボタン
     const tap = (id, fn) => { const el = $(id); const h = (e) => { e.stopPropagation(); e.preventDefault(); fn(); }; el.addEventListener('touchstart', h, { passive: false }); el.addEventListener('click', h); };
     tap('tbPause', () => g.pause());
+    tap('tbView', () => g.toggleView());
     tap('tbStamp', () => $('stampMenu').classList.toggle('hidden'));
     STAMPS.forEach((s, i) => { const b = document.createElement('button'); b.textContent = s; const h = (e) => { e.stopPropagation(); e.preventDefault(); g.sendStamp(i); $('stampMenu').classList.add('hidden'); }; b.addEventListener('touchstart', h, { passive: false }); b.addEventListener('click', h); $('stampMenu').appendChild(b); });
     // 設定
@@ -49,10 +50,18 @@ export class UI {
     bindRange('oVol', 'vol', (v) => Math.round(v * 100), () => g.applySettings());
     bindRange('oMus', 'music', (v) => Math.round(v * 100), () => g.applySettings());
     $('oInv').checked = s.invertY; $('oInv').addEventListener('change', () => { s.invertY = $('oInv').checked; g.applySettings(); g.saveSettings(); });
+    $('oView').value = s.view; $('oView').addEventListener('change', () => { s.view = $('oView').value; g.player.tp = s.view === 'tp'; g.saveSettings(); });
+    for (const id of ['wpnTitle', 'wpnLobby']) for (const w of WEAPON_IDS) { const b = document.createElement('button'); b.dataset.w = w; b.innerHTML = `${WEAPONS[w].name}<small>${WEAPONS[w].sub}</small>`; b.addEventListener('click', () => { g.audio.init(); g.audio.play('ui'); g.setWeapon(w); }); $(id).appendChild(b); }
+    this.renderWeapons();
     $('oQual').value = s.quality; $('oQual').addEventListener('change', () => { s.quality = $('oQual').value; s.qualityAuto = false; g.applySettings(true); g.saveSettings(); });
     if (g.input.isTouch) { $('keysPc').classList.add('hidden'); $('keysTouch').classList.remove('hidden'); }
   }
 
+  renderWeapons() {
+    const cur = this.g.settings.weapon;
+    for (const b of document.querySelectorAll('.wpn button')) b.classList.toggle('sel', b.dataset.w === cur);
+    for (const id of ['wdescTitle', 'wdescLobby']) $(id).textContent = WEAPONS[cur].desc;
+  }
   name() { return ($('name').value.trim() || '狩人').slice(0, 10); }
 
   show(id, backTo) {
@@ -60,7 +69,7 @@ export class UI {
     for (const s of this.screens) $(s).classList.toggle('on', s === id);
     this.current = id;
     if (id === 'sTitle') this.renderRecords();
-    if (id === 'sSet') $('oQual').value = this.g.settings.quality;
+    if (id === 'sSet') { $('oQual').value = this.g.settings.quality; $('oView').value = this.g.settings.view; }
   }
   hideMenus() { this.show(null); }
   fade(on) { $('fade').classList.toggle('on', on); }
@@ -90,7 +99,7 @@ export class UI {
     let html = '';
     for (let i = 0; i < MAX_PLAYERS; i++) {
       const p = roster[i];
-      html += p ? `<div class="slot"><i style="background:${PLAYER_COLORS[p.id % 4]}"></i>${esc(p.name)}${p.id === 0 ? '<em>ホスト</em>' : p.id === myId ? '<em>あなた</em>' : ''}</div>` : '<div class="slot empty">募集中…</div>';
+      html += p ? `<div class="slot"><i style="background:${PLAYER_COLORS[p.id % 4]}"></i>${esc(p.name)}<small style="color:var(--dim);font-weight:500">${(WEAPONS[p.w] || WEAPONS.great).name}</small>${p.id === 0 ? '<em>ホスト</em>' : p.id === myId ? '<em>あなた</em>' : ''}</div>` : '<div class="slot empty">募集中…</div>';
     }
     $('slots').innerHTML = html;
     $('bStart').classList.toggle('hidden', !isHost);
@@ -113,7 +122,7 @@ export class UI {
     // 溜めゲージ
     const fg = $('ringFg');
     if (p.state === 'charge') {
-      const f = sat(p.st / 1.75), over = p.st >= 2.7;
+      const f = sat(p.st / p.chargeT[2]), over = p.st >= p.chargeOver;
       fg.style.strokeDashoffset = 163.4 * (1 - f); fg.style.stroke = over ? '#8a8a8a' : p.chargeLv >= 3 ? '#ff3a1a' : p.chargeLv >= 2 ? '#ff9a2a' : p.chargeLv >= 1 ? '#ffd24a' : '#fff';
       $('ringBg').setAttribute('opacity', 1);
     } else { fg.style.strokeDashoffset = 163.4; $('ringBg').setAttribute('opacity', 0); }

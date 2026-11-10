@@ -4,7 +4,7 @@ import { clamp } from './util.js';
 const KEYMAP = {
   KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
   ShiftLeft: 'sprint', ShiftRight: 'sprint', Space: 'dodge', KeyE: 'potion', KeyR: 'potion', KeyQ: 'guard', KeyF: 'attack',
-  Digit1: 'stamp1', Digit2: 'stamp2', Digit3: 'stamp3', Digit4: 'stamp4', KeyP: 'pause', Tab: 'pause',
+  KeyV: 'view', Digit1: 'stamp1', Digit2: 'stamp2', Digit3: 'stamp3', Digit4: 'stamp4', KeyP: 'pause', Tab: 'pause',
 };
 
 export class Input {

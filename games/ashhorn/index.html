@@ -8,6 +8,7 @@
 <meta name="description" content="URLを送るだけで最大4人。一人称視点で巨大な灰角竜を狩る協力アクション。">
 <meta property="og:title" content="灰角 ASHHORN">
 <meta property="og:description" content="URLを送るだけで最大4人。一人称視点で巨大な灰角竜を狩る協力アクション。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 fill=%27%230b0706%27/%3E%3Cpath d=%27M6 26 L14 4 L18 14 L26 6 L22 26 Z%27 fill=%27%23ff6a2a%27/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap" rel="stylesheet">
@@ -108,6 +109,7 @@ body.touch .item{width:44px;height:44px}
 #tbPotion{right:max(18px,env(safe-area-inset-right));bottom:calc(max(28px,env(safe-area-inset-bottom)) + 112px);width:58px;height:58px;border-color:rgba(110,220,130,.8)}
 #tbPause{right:max(14px,env(safe-area-inset-right));top:74px;width:40px;height:40px;font-size:15px}
 #tbStamp{right:calc(max(14px,env(safe-area-inset-right)) + 48px);top:74px;width:40px;height:40px;font-size:11px}
+#tbView{right:calc(max(14px,env(safe-area-inset-right)) + 96px);top:74px;width:40px;height:40px;font-size:11px}
 #stampMenu{position:absolute;right:max(14px,env(safe-area-inset-right));top:122px;display:flex;flex-direction:column;gap:6px;pointer-events:auto}
 #stampMenu button{padding:9px 14px;background:rgba(10,6,5,.85);border:1px solid var(--line);font-weight:700;font-size:13px}
 #rotate{position:fixed;inset:0;background:var(--ink);z-index:50;display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;font-weight:700;text-align:center;padding:30px}
@@ -134,6 +136,8 @@ label.f{display:block;font-size:11px;font-weight:700;letter-spacing:.15em;color:
 .btn:hover,.btn:focus-visible{background:rgba(255,106,42,.22);border-color:var(--ember);padding-left:28px;outline:none}
 .btn.primary{background:linear-gradient(90deg,rgba(255,106,42,.5),rgba(255,106,42,.12));border-color:var(--ember)}
 .btn.sm{padding:9px 16px;font-size:13px}.btn:disabled{opacity:.4;pointer-events:none}
+.wpn{display:flex;gap:6px}.wpn button{flex:1;padding:8px 4px;border:1px solid var(--line);background:rgba(0,0,0,.5);font-weight:900;font-size:15px;letter-spacing:.1em;transition:all .15s}.wpn button small{display:block;font-size:10px;font-weight:500;color:var(--dim);letter-spacing:.2em}
+.wpn button.sel{border-color:var(--ember);background:rgba(255,106,42,.32)}.wdesc{font-size:11px;color:var(--dim);margin:5px 0 10px;min-height:1.5em;line-height:1.5}
 .row{display:flex;gap:9px}.row>*{flex:1}
 #records{margin-top:16px;font-size:12px;color:var(--dim);line-height:1.9}#records b{color:var(--gold);font-variant-numeric:tabular-nums}
 .foot{margin-top:14px;font-size:10px;color:rgba(163,154,136,.6)}
@@ -171,6 +175,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
 #toast.on{opacity:1}
 #loading{position:fixed;inset:0;z-index:70;background:var(--ink);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;font-family:var(--serif);letter-spacing:.4em;transition:opacity .6s}
 #loading b{font-size:44px;font-weight:800}#loading span{font-size:11px;color:var(--dim)}
+@media (max-height:680px){h1{font-size:54px}.tag{display:none}.btn{padding:10px 18px}#sTitle{padding-top:14px;padding-bottom:14px}}
 @media (max-height:520px){
   h1{font-size:54px}.tag{display:none}.btn{padding:9px 16px;font-size:14px}#records,.foot{display:none}
   #sTitle .wrap{max-width:none;flex-direction:row;align-items:center;gap:30px}#sTitle .wrap>div{flex:1}
@@ -206,7 +211,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
   <div id="hint">
     <div><kbd>WASD</kbd>移動 <kbd>Shift</kbd>ダッシュ <kbd>Space</kbd>回避</div>
     <div><kbd>左クリック</kbd>斬る／長押しで溜め <kbd>右クリック</kbd>ガード</div>
-    <div><kbd>E</kbd>回復薬 <kbd>Esc</kbd>メニュー</div>
+    <div><kbd>E</kbd>回復薬 <kbd>V</kbd>視点切替 <kbd>Esc</kbd>メニュー</div>
   </div>
   <div id="stamps"><span>1 ナイス！</span><span>2 回復する！</span><span>3 尻尾を狙おう！</span><span>4 助けて！</span></div>
   <div id="items">
@@ -224,6 +229,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
   <div class="tb" id="tbPotion" data-btn="potion">回復</div>
   <button class="tb" id="tbPause">Ⅱ</button>
   <button class="tb" id="tbStamp">合図</button>
+  <button class="tb" id="tbView">視点</button>
   <div id="stampMenu" class="hidden"></div>
 </div>
 <div id="rotate"><svg viewBox="0 0 24 24" fill="none" stroke="#e8c27a" stroke-width="1.5"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M3 9a9 9 0 0 1 3-5M21 15a9 9 0 0 1-3 5"/></svg>端末を横向きにしてください</div>
@@ -234,12 +240,14 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
     <div class="wrap">
       <div>
         <h1>灰角<small>ASHHORN</small></h1>
-        <p class="tag">燼の火口に棲む灰角竜を狩れ。<br>一人称視点・最大4人の協力狩猟アクション。</p>
+        <p class="tag">燼の火口に棲む灰角竜を狩れ。<br>武器は3種、視点は一人称と三人称。最大4人の協力狩猟アクション。</p>
       </div>
       <div>
         <label class="f" for="name">狩人の名前</label>
         <input class="inp" id="name" maxlength="10" autocomplete="off" spellcheck="false">
-        <div class="btns">
+        <label class="f" style="margin-top:12px">武器</label>
+        <div class="wpn" id="wpnTitle"></div><div class="wdesc" id="wdescTitle"></div>
+        <div class="btns" style="margin-top:0">
           <button class="btn primary" id="bHost">部屋を作る<small>URLを送って最大4人</small></button>
           <div class="row"><input class="inp" id="joinCode" maxlength="5" placeholder="部屋コード" autocomplete="off" spellcheck="false" style="text-transform:uppercase;letter-spacing:.3em"><button class="btn" id="bJoin" style="flex:.8">参加</button></div>
           <button class="btn" id="bSolo">ソロで狩る<small>タイムアタック</small></button>
@@ -258,6 +266,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
     <div id="shareUrl"></div>
     <div class="row"><button class="btn sm" id="bCopy">招待URLをコピー</button><button class="btn sm" id="bShare">共有…</button></div>
     <div id="slots"></div>
+    <div class="wpn" id="wpnLobby"></div><div class="wdesc" id="wdescLobby"></div>
     <div class="row"><button class="btn primary" id="bStart">出発する</button><button class="btn" id="bLeave" style="flex:.5">退出</button></div>
     <p class="sub" style="margin:12px 0 0" id="lobbyNote"></p>
   </section>
@@ -271,7 +280,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
       <dt>右クリック</dt><dd>ガード。<b>当たる直前に構えると「弾き返し」</b>→直後の攻撃がカウンター斬りに</dd>
       <dt>Space</dt><dd>回避。<b>攻撃をすり抜けると「見切り」</b>で攻撃力アップ＋スタミナ回復</dd>
       <dt>Shift ／ E</dt><dd>ダッシュ ／ 回復薬（飲む間は無防備）</dd>
-      <dt>1〜4</dt><dd>仲間への合図</dd>
+      <dt>V ／ 1〜4</dt><dd>一人称・三人称の切り替え ／ 仲間への合図</dd>
     </dl>
     <dl class="keys hidden" id="keysTouch">
       <dt>左側をドラッグ</dt><dd>移動（いっぱいに倒すとダッシュ）</dd>
@@ -282,6 +291,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
     </dl>
     <div class="tips">
       <b>頭</b>が弱点（視点を上げて狙う）。<b>脚</b>を斬り続けると転倒して頭が下りてくる。<b>背中</b>は硬く弾かれる。<br>
+      武器は3種：<b>大剣</b>（溜め斬り）、<b>双剣</b>（手数と回避）、<b>戦槌</b>（頭を殴って気絶）。<br>
       <b>尻尾</b>は切断でき、回転攻撃の範囲が縮む。突進は<b>外周の岩</b>に誘導すると角が刺さって大きな隙になる。<br>
       力尽きてよいのはパーティ全体で<b>2回まで</b>。3回目でクエスト失敗。
     </div>
@@ -293,6 +303,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
     <p class="sub">設定はこの端末に保存されます。</p>
     <div class="set"><span>視点感度</span><input type="range" id="oSens" min="0.3" max="2.5" step="0.05"><output id="oSensV"></output></div>
     <div class="set"><span>上下反転</span><label><input type="checkbox" id="oInv"> 反転する</label><span></span></div>
+    <div class="set"><span>視点</span><select id="oView"><option value="fp">一人称（迫力重視）</option><option value="tp">三人称（周りが見やすい）</option></select><span></span></div>
     <div class="set"><span>画質</span><select id="oQual"><option value="high">高（影・発光あり）</option><option value="mid">中（発光あり）</option><option value="low">低（軽量）</option></select><span></span></div>
     <div class="set"><span>音量</span><input type="range" id="oVol" min="0" max="1" step="0.05"><output id="oVolV"></output></div>
     <div class="set"><span>BGM</span><input type="range" id="oMus" min="0" max="1" step="0.05"><output id="oMusV"></output></div>

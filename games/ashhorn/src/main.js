@@ -8,7 +8,7 @@ import { Boss, Hazards } from './boss.js';
 import { Player, Avatar } from './player.js';
 import { Net } from './net.js';
 import { UI, rankOf } from './ui.js';
-import { PLAYER, PLAYER_COLORS, STAMPS, CARTS, QUEST_LIMIT, MAX_PLAYERS, BOSS } from './config.js';
+import { PLAYER, PLAYER_COLORS, STAMPS, CARTS, QUEST_LIMIT, MAX_PLAYERS, BOSS, WEAPONS } from './config.js';
 import { clamp, sat, store, damp } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -19,8 +19,9 @@ class Game {
     const canvas = $('c');
     this.input = new Input(canvas, $('touch'));
     if (this.input.isTouch) document.body.classList.add('touch');
-    const def = { sens: 1, invertY: false, vol: 0.8, music: 0.55, quality: this.input.isTouch ? 'mid' : 'high', qualityAuto: true };
+    const def = { sens: 1, invertY: false, vol: 0.8, music: 0.55, quality: this.input.isTouch ? 'mid' : 'high', qualityAuto: true, weapon: 'great', view: 'fp' };
     this.settings = Object.assign(def, store.get('ashhorn.settings', {}));
+    if (!WEAPONS[this.settings.weapon]) this.settings.weapon = 'great';
     this.world = new World(canvas, this.settings.quality);
     this.audio = new AudioSys();
     this.fx = new Fx(this.world, $('dmgLayer'));
@@ -41,7 +42,7 @@ class Game {
     this.player = new Player(this.world, this.input, {
       audio: this.audio, fx: this.fx,
       popup: (t, c) => this.ui.popup(t, c), flash: (k) => this.ui.flash(k),
-      dealHit: (part, dmg, pt, strong, weak) => this.dealHit(part, dmg, pt, strong, weak),
+      dealHit: (part, dmg, pt, strong, weak, blunt) => this.dealHit(part, dmg, pt, strong, weak, blunt),
       parry: (h) => { if (this.isAuthority()) this.boss.applyParry(this.myId, !!h.parryFlinch); else this.net.send({ t: 'parry', f: h.parryFlinch ? 1 : 0 }); },
       onDown: () => { if (this.isAuthority()) this.playerDown(this.myId); else this.net.send({ t: 'down' }); },
       onJust: () => { if (this.mode === 'solo') this.slowT = 0.32; },
@@ -62,6 +63,7 @@ class Game {
     this.fx.resize(innerHeight, this.world.renderer.getPixelRatio());
     addEventListener('resize', () => this.fx.resize(innerHeight, this.world.renderer.getPixelRatio()));
     addEventListener('pointerdown', () => this.audio.init(), { passive: true });
+    addEventListener('pagehide', () => this.net.close()); // 退出をすぐ相手に伝える
     document.addEventListener('visibilitychange', () => { if (document.hidden && this.mode === 'solo' && this.state === 'hunt') this.pause(); });
 
     // 招待URLから来た場合
@@ -96,14 +98,14 @@ class Game {
 
   // ---- 入口
   startSolo() {
-    this.mode = 'solo'; this.myId = 0; this.roster = [{ id: 0, name: this.ui.name() }];
+    this.mode = 'solo'; this.myId = 0; this.roster = [{ id: 0, name: this.ui.name(), w: this.settings.weapon }];
     this.beginHunt(1);
   }
   async hostRoom() {
     this.ui.toast('部屋を準備中…', 8000);
     try {
       await this.net.host();
-      this.mode = 'multi'; this.myId = 0; this.roster = [{ id: 0, name: this.ui.name() }]; this.state = 'lobby';
+      this.mode = 'multi'; this.myId = 0; this.roster = [{ id: 0, name: this.ui.name(), w: this.settings.weapon }]; this.state = 'lobby';
       this.ui.renderLobby(this.roster, true, this.net.code, 0); this.ui.show('sLobby'); this.ui.toast('部屋ができました。URLを仲間に送ってください');
     } catch (e) { this.ui.toast(e.message, 5000); }
   }
@@ -112,9 +114,21 @@ class Game {
     try {
       await this.net.join(code);
       this.mode = 'multi'; this.state = 'lobby';
-      this.net.send({ t: 'hello', name: this.ui.name() });
+      this.net.send({ t: 'hello', name: this.ui.name(), w: this.settings.weapon });
       this.ui.toast('部屋に入りました');
     } catch (e) { this.net.close(); this.ui.toast(e.message, 5000); }
+  }
+  // 武器の変更（タイトル・集会所・リザルトで）
+  setWeapon(id) {
+    if (!WEAPONS[id] || this.state === 'hunt') return;
+    this.settings.weapon = id; this.saveSettings(); this.ui.renderWeapons();
+    const me = this.roster.find((r) => r.id === this.myId); if (me) me.w = id;
+    if (this.mode === 'multi') { if (this.net.isHost) { this.net.broadcast({ t: 'roster', roster: this.roster }); this.rosterChanged(); } else this.net.send({ t: 'wpn', w: id }); }
+  }
+  toggleView() {
+    if (this.state !== 'hunt') return;
+    this.player.tp = !this.player.tp; this.settings.view = this.player.tp ? 'tp' : 'fp'; this.saveSettings();
+    this.ui.toast(this.player.tp ? '三人称視点' : '一人称視点', 1200);
   }
   hostStart() { if (!this.net.isHost) return; this.net.broadcast({ t: 'start', n: this.roster.length }); this.beginHunt(this.roster.length); }
   again() { if (this.mode === 'solo') this.beginHunt(1); else this.hostStart(); }
@@ -126,6 +140,7 @@ class Game {
   cleanupHunt() {
     this.input.enabled = false; this.input.clear(); this.input.exitLock();
     for (const a of this.avatars.values()) a.dispose(); this.avatars.clear();
+    if (this.selfAvatar) { this.selfAvatar.dispose(); this.selfAvatar = null; }
     this.hazards.clear(); this.fx.clear(); this.audio.stopMusic(); this.audio.breath(false);
     this.ui.hud(false); this.ui.fade(false); this.paused = false; this.ended = false;
     this.player.vm.visible = false; this.player.trail.visible = false;
@@ -138,11 +153,16 @@ class Game {
     this.state = 'hunt'; this.time = 0; this.carts = CARTS; this.ended = false; this.introT = 0; this.huntN = n; this.stats = {}; this.breakBy = {}; this.endT = 0;
     this.boss.reset(n); this.rage = 0; this.audio.setIntensity(0);
     const idx = Math.max(0, this.roster.findIndex((r) => r.id === this.myId));
+    const mine = this.roster[idx] || {};
+    this.player.setWeapon(mine.w || this.settings.weapon); this.player.tp = this.settings.view === 'tp';
     this.player.reset(idx, this.roster.length); this.player.setColor(PLAYER_COLORS[this.myId % 4]);
+    this.selfAvatar = new Avatar(this.world.scene, '', PLAYER_COLORS[this.myId % 4], this.player.weaponId); // 三人称用の自分の姿
+    this.selfAvatar.label.visible = false; this.selfAvatar.k = 70; this.selfAvatar.g.visible = false;
     this.player.vm.visible = true; this.player.trail.visible = true;
     this.syncAvatars();
     this.ui.hideMenus(); this.ui.hud(true); this.ui.bossLag = 1;
     this.ui.setMe(this.nameOf(this.myId), PLAYER_COLORS[this.myId % 4]); this.ui.setRoom(this.mode === 'multi' ? this.net.code : '');
+    $('feed').innerHTML = ''; $('popups').innerHTML = '';
     this.ui.banner('狩猟開始', BOSS.name);
     this.input.clear(); this.input.enabled = true; this.input.requestLock();
     this.audio.init(); this.audio.play('horn', 1);
@@ -154,8 +174,11 @@ class Game {
     const ids = new Set(this.roster.map((r) => r.id));
     for (const [id, a] of this.avatars) if (!ids.has(id)) { a.dispose(); this.avatars.delete(id); }
     this.roster.forEach((r, i) => {
-      if (r.id === this.myId || this.avatars.has(r.id)) return;
-      const a = new Avatar(this.world.scene, r.name, PLAYER_COLORS[r.id % 4]);
+      if (r.id === this.myId) return;
+      const ex = this.avatars.get(r.id);
+      if (ex && ex.wid === (r.w || 'great')) return;
+      if (ex) ex.dispose();
+      const a = new Avatar(this.world.scene, r.name, PLAYER_COLORS[r.id % 4], r.w || 'great');
       const an = (i - (this.roster.length - 1) / 2) * 0.16; a.x = a.tx = Math.sin(an) * 28; a.z = a.tz = Math.cos(an) * 28;
       a.id = r.id; this.avatars.set(r.id, a);
     });
@@ -190,7 +213,7 @@ class Game {
         this.breakBy[ev.p] = ev.by; this.world.addShake(0.5);
         break;
       case 'topple': ui.feed(`${who} が転倒させた！`); ui.popup('転倒！ 頭を狙え', 'just'); break;
-      case 'stun': ui.feed(`${who} の弾き返しで気絶！`); ui.popup('気絶！', 'parry'); break;
+      case 'stun': ui.feed(`${who} が気絶させた！`); ui.popup('気絶！', 'parry'); break;
       case 'phase': this.boss.phase = ev.p; this.audio.setIntensity(ev.p - 1); ui.banner(ev.p >= 3 ? '激昂・極' : '激昂', ev.p >= 3 ? '大地が噴き上がる' : '攻撃が激しくなる'); break;
       case 'dead': this.onBossDead(); break;
       case 'hit': {
@@ -204,9 +227,9 @@ class Game {
     }
   }
 
-  dealHit(part, dmg, pt, strong, weak) {
-    const m = { p: part, d: dmg, x: +pt.x.toFixed(2), y: +pt.y.toFixed(2), z: +pt.z.toFixed(2), s: strong ? 1 : 0, w: weak ? 1 : 0 };
-    if (this.isAuthority()) { this.boss.applyHit(part, dmg, this.myId); if (this.net.isHost) this.net.broadcast({ t: 'ev', e: { k: 'hit', ...m, by: this.myId } }); }
+  dealHit(part, dmg, pt, strong, weak, blunt) {
+    const m = { p: part, d: dmg, x: +pt.x.toFixed(2), y: +pt.y.toFixed(2), z: +pt.z.toFixed(2), s: strong ? 1 : 0, w: weak ? 1 : 0, b: blunt ? 1 : 0 };
+    if (this.isAuthority()) { this.boss.applyHit(part, dmg, this.myId, blunt); if (this.net.isHost) this.net.broadcast({ t: 'ev', e: { k: 'hit', ...m, by: this.myId } }); }
     else this.net.send({ t: 'hit', ...m });
   }
   sendStamp(n) { if (this.state !== 'hunt') return; if (this.isAuthority()) this.emit({ k: 'stamp', pid: this.myId, n }); else this.net.send({ t: 'stamp', n }); }
@@ -257,7 +280,7 @@ class Game {
     switch (m.t) {
       case 'hello': {
         if (this.roster.find((r) => r.id === id) || this.roster.length >= MAX_PLAYERS) return;
-        this.roster.push({ id, name: String(m.name || '狩人').slice(0, 10) }); this.roster.sort((a, b) => a.id - b.id);
+        this.roster.push({ id, name: String(m.name || '狩人').slice(0, 10), w: WEAPONS[m.w] ? m.w : 'great' }); this.roster.sort((a, b) => a.id - b.id);
         this.net.sendTo(id, { t: 'welcome', id, roster: this.roster, state: this.state === 'hunt' ? 'hunt' : 'lobby', n: this.huntN });
         this.net.broadcast({ t: 'roster', roster: this.roster }, id);
         this.rosterChanged(); this.ui.toast(`${this.nameOf(id)} が参加しました`); this.audio.play('uiBig', 1);
@@ -267,11 +290,12 @@ class Game {
       case 'hit': {
         if (this.state !== 'hunt' || this.ended) return;
         const d = clamp(+m.d || 0, 0, 500);
-        this.boss.applyHit(m.p, d, id);
+        this.boss.applyHit(m.p, d, id, !!m.b);
         const e = { k: 'hit', x: m.x, y: m.y, z: m.z, s: m.s, w: m.w, d, by: id };
         this.applyEvent(e); this.net.broadcast({ t: 'ev', e }, id);
         break;
       }
+      case 'wpn': { const r = this.roster.find((x) => x.id === id); if (r && WEAPONS[m.w] && this.state !== 'hunt') { r.w = m.w; this.net.broadcast({ t: 'roster', roster: this.roster }); this.rosterChanged(); } break; }
       case 'parry': if (this.state === 'hunt') this.boss.applyParry(id, !!m.f); break;
       case 'down': if (this.state === 'hunt') this.playerDown(id); break;
       case 'stamp': this.emit({ k: 'stamp', pid: id, n: m.n | 0 }); break;
@@ -357,7 +381,10 @@ class Game {
     input.update(dt);
     this.introT += dt;
     for (let i = 0; i < 4; i++) if (input.pressed('stamp' + (i + 1))) this.sendStamp(i);
+    if (input.pressed('view')) this.toggleView();
     player.update(dt, boss);
+    const sa = this.selfAvatar;
+    if (sa) { sa.g.visible = player.tp; if (player.tp) { sa.apply(player.netState()); sa.update(dt); } else { sa.x = sa.tx = player.x; sa.z = sa.tz = player.z; } }
     // 竜
     if (auth) {
       if (!boss.active && this.introT > 1.7 && !this.ended) { boss.active = true; boss.start('intro'); boss.pickTarget(); this.audio.startMusic(); }
