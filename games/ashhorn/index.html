@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0b0706">
+<title>灰角 ASHHORN — 協力狩猟アクション</title>
+<meta name="description" content="URLを送るだけで最大4人。一人称視点で巨大な灰角竜を狩る協力アクション。">
+<meta property="og:title" content="灰角 ASHHORN">
+<meta property="og:description" content="URLを送るだけで最大4人。一人称視点で巨大な灰角竜を狩る協力アクション。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#0b0706; --panel:rgba(14,9,8,.82); --line:rgba(232,194,122,.28); --bone:#e6dcc6; --dim:#a39a88;
+  --ember:#ff6a2a; --gold:#e8c27a; --hp:#6fd36a; --hpLow:#e2573a; --st:#e8c23a; --blue:#7ac8ff;
+  --serif:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho",serif;
+  --sans:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:var(--ink);color:var(--bone);font-family:var(--sans);font-weight:500;overscroll-behavior:none;touch-action:none;user-select:none;-webkit-user-select:none}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block;outline:none}
+button{font:inherit;color:inherit;cursor:pointer;border:none;background:none}
+input,select{font:inherit;color:inherit}
+.hidden{display:none!important}
+
+/* ---------- HUD ---------- */
+#hud{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .5s}
+#hud.on{opacity:1}
+#vig{position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 52%,rgba(0,0,0,.55) 100%)}
+#flash{position:absolute;inset:0;opacity:0;mix-blend-mode:screen}
+#low{position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse at center,transparent 45%,rgba(200,20,10,.55) 100%)}
+#me{position:absolute;left:max(18px,env(safe-area-inset-left));top:max(16px,env(safe-area-inset-top));width:min(26vw,300px)}
+.pname{font-weight:700;font-size:13px;letter-spacing:.08em;text-shadow:0 1px 3px #000;margin-bottom:5px;display:flex;gap:8px;align-items:center}
+.pname i{width:9px;height:9px;transform:rotate(45deg);display:inline-block}
+.bar{position:relative;height:13px;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.22);transform:skewX(-18deg);overflow:hidden}
+.bar>b{position:absolute;left:0;top:0;bottom:0;width:100%;transform-origin:left;display:block}
+#hpLag{background:#b3271c}#hp{background:linear-gradient(#9be88f,#4fb84c)}#hp.low{background:linear-gradient(#ff8a6a,#d93a22)}
+#stBar{height:7px;margin-top:4px;width:88%}#st{background:linear-gradient(#ffe37a,#d9a520)}#st.ex{background:#a3482c}
+#buffs{margin-top:8px;display:flex;gap:6px;font-size:11px;font-weight:700}
+#buffs span{padding:2px 8px;background:rgba(0,0,0,.6);border:1px solid var(--gold);color:var(--gold)}
+#buffs span.c{border-color:var(--blue);color:var(--blue)}
+#team{margin-top:12px;display:flex;flex-direction:column;gap:7px;width:62%}
+#team .pname{font-size:11px;margin-bottom:3px}#team .bar{height:7px}#team .bar b{background:#7fd87a}
+#team .dead{opacity:.45}
+#boss{position:absolute;left:50%;top:max(14px,env(safe-area-inset-top));transform:translateX(-50%);width:min(38vw,540px);text-align:center;opacity:0;transition:opacity .6s}
+#boss.on{opacity:1}
+#bossName{font-family:var(--serif);font-weight:800;font-size:clamp(14px,2vw,20px);letter-spacing:.22em;text-shadow:0 2px 8px #000,0 0 18px rgba(255,90,30,.5);margin-bottom:6px}
+#bossBar{height:11px}#bossLag{background:#e8c27a}#bossHp{background:linear-gradient(#ff7a3a,#c8320f)}
+#bossMeta{margin-top:6px;display:flex;justify-content:center;gap:8px;font-size:10px;font-weight:700;letter-spacing:.1em}
+#bossMeta span{padding:1px 8px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.5);color:var(--dim)}
+#bossMeta span.done{color:var(--gold);border-color:var(--gold)}#bossMeta span.rage{color:#ff5a3a;border-color:#ff5a3a}
+#quest{position:absolute;right:max(18px,env(safe-area-inset-right));top:max(16px,env(safe-area-inset-top));text-align:right;text-shadow:0 1px 4px #000}
+#timer{font-family:var(--serif);font-weight:800;font-size:clamp(18px,2.4vw,26px);letter-spacing:.06em;font-variant-numeric:tabular-nums}
+#carts{font-size:12px;font-weight:700;color:var(--dim);margin-top:2px}#carts b{color:var(--gold);letter-spacing:.25em}
+#roomTag{font-size:11px;color:var(--dim);margin-top:2px;letter-spacing:.1em}
+#cross{position:absolute;left:50%;top:50%;width:64px;height:64px;transform:translate(-50%,-50%)}
+#dot{position:absolute;left:50%;top:50%;width:5px;height:5px;border-radius:50%;background:#fff;transform:translate(-50%,-50%);box-shadow:0 0 4px #000;opacity:.85}
+#ring{position:absolute;inset:0;transform:rotate(-90deg)}
+#ring circle{fill:none;stroke-width:3.5;stroke-linecap:butt}
+#popups{position:absolute;left:50%;top:60%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:4px}
+.pop{font-family:var(--serif);font-weight:800;font-size:clamp(18px,2.6vw,30px);letter-spacing:.15em;text-shadow:0 2px 6px #000;animation:pop .95s ease-out forwards;white-space:nowrap}
+.pop.just{color:#ffe37a;text-shadow:0 0 18px rgba(255,200,60,.9),0 2px 6px #000}.pop.parry{color:var(--blue);text-shadow:0 0 18px rgba(120,200,255,.9),0 2px 6px #000}
+.pop.warn{color:#ffb39a;font-size:clamp(13px,1.7vw,18px)}
+@keyframes pop{0%{opacity:0;transform:scale(1.5)}12%{opacity:1;transform:scale(1)}70%{opacity:1}100%{opacity:0;transform:translateY(-14px)}}
+#dmgLayer{position:absolute;inset:0;overflow:hidden}
+.dmg{position:absolute;left:0;top:0;font-family:var(--serif);font-weight:800;font-size:clamp(18px,2.3vw,28px);color:#fff;text-shadow:0 0 4px #000,0 2px 0 #000;will-change:transform,opacity}
+.dmg.weak{color:#ffd95a;font-size:clamp(24px,3vw,38px)}.dmg.strong{font-size:clamp(24px,3vw,38px);color:#ffb070}.dmg.dull{color:#9aa3ad;font-size:clamp(14px,1.8vw,20px)}
+.dmg.other{color:#cfd6e0;font-size:clamp(12px,1.5vw,17px);opacity:.8}
+#feed{position:absolute;right:max(18px,env(safe-area-inset-right));top:104px;display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+.feed{font-size:12px;font-weight:700;padding:4px 10px;background:rgba(0,0,0,.6);border-right:3px solid var(--gold);animation:feed 4.2s forwards}
+.feed.stamp{border-color:var(--blue);font-size:14px}
+@keyframes feed{0%{opacity:0;transform:translateX(20px)}6%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0}}
+#banner{position:absolute;left:0;right:0;top:27%;text-align:center;font-family:var(--serif);font-weight:800;font-size:clamp(34px,7vw,92px);letter-spacing:.35em;text-indent:.35em;text-shadow:0 4px 30px #000,0 0 40px rgba(255,100,30,.6);opacity:0}
+#banner.show{animation:banner 3s ease-out forwards}
+#banner small{display:block;font-size:.26em;letter-spacing:.5em;color:var(--gold);margin-top:.4em}
+@keyframes banner{0%{opacity:0;letter-spacing:.8em}15%{opacity:1;letter-spacing:.35em}75%{opacity:1}100%{opacity:0}}
+#deadMsg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(20,0,0,.5);font-family:var(--serif);font-size:clamp(24px,4vw,44px);font-weight:800;letter-spacing:.3em;opacity:0;transition:opacity .6s}
+#deadMsg.on{opacity:1}#deadMsg small{font-family:var(--sans);font-size:14px;letter-spacing:.1em;color:var(--dim);margin-top:14px}
+#arrow{position:absolute;top:50%;font-size:34px;color:var(--ember);text-shadow:0 0 12px rgba(255,90,30,.9),0 2px 4px #000;transform:translateY(-50%);opacity:0;transition:opacity .2s}
+#arrow.l{left:5%;opacity:.9}#arrow.r{right:5%;opacity:.9}
+#items{position:absolute;right:max(18px,env(safe-area-inset-right));bottom:max(18px,env(safe-area-inset-bottom));display:flex;align-items:flex-end;gap:14px}
+.item{width:58px;height:58px;border:1px solid var(--line);background:rgba(0,0,0,.55);display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative}
+.item svg{width:26px;height:26px}.item b{position:absolute;right:4px;bottom:1px;font-size:14px;font-weight:900}
+.item kbd{position:absolute;left:3px;top:1px;font:700 10px var(--sans);color:var(--dim)}
+#hint{position:absolute;left:max(18px,env(safe-area-inset-left));bottom:max(16px,env(safe-area-inset-bottom));font-size:11px;color:rgba(230,220,198,.62);line-height:1.75;text-shadow:0 1px 3px #000}
+#hint kbd{font:700 10px var(--sans);padding:1px 5px;border:1px solid rgba(230,220,198,.4);border-radius:3px;margin-right:4px;color:var(--bone)}
+#stamps{position:absolute;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:6px;font-size:10px;color:rgba(230,220,198,.6)}
+#stamps span{padding:2px 8px;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.14)}
+#fpsWarn{position:absolute;left:50%;bottom:54px;transform:translateX(-50%);font-size:11px;color:var(--dim)}
+
+/* ---------- タッチ操作 ---------- */
+#touch{position:fixed;inset:0;display:none;pointer-events:none}
+body.touch #touch.on{display:block;pointer-events:auto}
+body.touch #hint,body.touch #stamps,body.touch #items kbd{display:none}
+body.touch #items{right:auto;left:50%;transform:translateX(-50%);bottom:max(8px,env(safe-area-inset-bottom))}
+body.touch .item{width:44px;height:44px}
+#stickBase{position:absolute;width:112px;height:112px;margin:-56px 0 0 -56px;border-radius:50%;border:2px solid rgba(255,255,255,.25);background:rgba(0,0,0,.25);opacity:0;transition:opacity .15s}
+#stickBase.on{opacity:1}
+#stickKnob{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;background:rgba(255,255,255,.4)}
+#stickHint{position:absolute;left:max(34px,env(safe-area-inset-left));bottom:max(34px,env(safe-area-inset-bottom));width:112px;height:112px;border-radius:50%;border:2px dashed rgba(255,255,255,.16)}
+.tb{position:absolute;border-radius:50%;border:2px solid rgba(255,255,255,.35);background:rgba(10,6,5,.45);color:#fff;font-weight:900;font-size:13px;display:flex;align-items:center;justify-content:center;letter-spacing:.05em;pointer-events:auto}
+.tb.on{background:rgba(255,106,42,.55);border-color:#fff;transform:scale(.94)}
+#tbAtk{right:max(22px,env(safe-area-inset-right));bottom:max(28px,env(safe-area-inset-bottom));width:96px;height:96px;font-size:17px;border-color:rgba(255,140,80,.8)}
+#tbDodge{right:calc(max(22px,env(safe-area-inset-right)) + 108px);bottom:max(18px,env(safe-area-inset-bottom));width:70px;height:70px}
+#tbGuard{right:calc(max(22px,env(safe-area-inset-right)) + 84px);bottom:calc(max(28px,env(safe-area-inset-bottom)) + 84px);width:70px;height:70px}
+#tbPotion{right:max(18px,env(safe-area-inset-right));bottom:calc(max(28px,env(safe-area-inset-bottom)) + 112px);width:58px;height:58px;border-color:rgba(110,220,130,.8)}
+#tbPause{right:max(14px,env(safe-area-inset-right));top:74px;width:40px;height:40px;font-size:15px}
+#tbStamp{right:calc(max(14px,env(safe-area-inset-right)) + 48px);top:74px;width:40px;height:40px;font-size:11px}
+#stampMenu{position:absolute;right:max(14px,env(safe-area-inset-right));top:122px;display:flex;flex-direction:column;gap:6px;pointer-events:auto}
+#stampMenu button{padding:9px 14px;background:rgba(10,6,5,.85);border:1px solid var(--line);font-weight:700;font-size:13px}
+#rotate{position:fixed;inset:0;background:var(--ink);z-index:50;display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;font-weight:700;text-align:center;padding:30px}
+#rotate svg{width:64px;height:64px}
+@media (orientation:portrait){body.touch.playing #rotate{display:flex}}
+
+/* ---------- メニュー ---------- */
+#fade{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .5s;z-index:20}
+#fade.on{opacity:1}
+#menu{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.screen{display:none;pointer-events:auto;max-height:100%;overflow:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;user-select:text;-webkit-user-select:text}
+.screen.on{display:block}
+#sTitle{width:100%;height:100%;background:linear-gradient(90deg,rgba(8,5,4,.9) 0%,rgba(8,5,4,.55) 38%,transparent 70%);padding:clamp(18px,5vh,56px) clamp(20px,6vw,90px)}
+#sTitle .wrap{display:flex;flex-direction:column;min-height:100%;justify-content:center;max-width:430px}
+h1{font-family:var(--serif);font-weight:800;font-size:clamp(64px,13vh,128px);line-height:1;letter-spacing:.12em;text-shadow:0 0 50px rgba(255,90,30,.55),0 6px 20px #000}
+h1 small{display:block;font-size:.17em;letter-spacing:.62em;color:var(--gold);margin-top:1.1em;font-weight:600}
+.tag{margin:clamp(10px,2.5vh,22px) 0 clamp(14px,3.5vh,30px);font-size:14px;color:var(--dim);line-height:1.8}
+label.f{display:block;font-size:11px;font-weight:700;letter-spacing:.15em;color:var(--dim);margin-bottom:6px}
+.inp{width:100%;padding:11px 14px;background:rgba(0,0,0,.55);border:1px solid var(--line);outline:none;font-weight:700;font-size:16px;letter-spacing:.05em;user-select:text;-webkit-user-select:text}
+.inp:focus{border-color:var(--gold)}
+.btns{display:flex;flex-direction:column;gap:9px;margin-top:16px}
+.btn{position:relative;padding:13px 20px;text-align:left;font-weight:900;font-size:16px;letter-spacing:.14em;background:rgba(20,12,10,.78);border:1px solid var(--line);transition:all .15s;display:flex;justify-content:space-between;align-items:center}
+.btn small{font-weight:500;font-size:11px;letter-spacing:.04em;color:var(--dim)}
+.btn:hover,.btn:focus-visible{background:rgba(255,106,42,.22);border-color:var(--ember);padding-left:28px;outline:none}
+.btn.primary{background:linear-gradient(90deg,rgba(255,106,42,.5),rgba(255,106,42,.12));border-color:var(--ember)}
+.btn.sm{padding:9px 16px;font-size:13px}.btn:disabled{opacity:.4;pointer-events:none}
+.row{display:flex;gap:9px}.row>*{flex:1}
+#records{margin-top:16px;font-size:12px;color:var(--dim);line-height:1.9}#records b{color:var(--gold);font-variant-numeric:tabular-nums}
+.foot{margin-top:14px;font-size:10px;color:rgba(163,154,136,.6)}
+.panel{width:min(92vw,620px);background:var(--panel);border:1px solid var(--line);padding:clamp(18px,3.5vh,34px) clamp(18px,3vw,36px);backdrop-filter:blur(6px);box-shadow:0 20px 80px rgba(0,0,0,.7)}
+.panel.wide{width:min(94vw,820px)}
+h2{font-family:var(--serif);font-weight:800;font-size:clamp(22px,3.5vh,30px);letter-spacing:.22em;margin-bottom:6px}
+.sub{font-size:12px;color:var(--dim);margin-bottom:18px;line-height:1.7}
+#code{font-family:var(--serif);font-size:clamp(34px,6vh,52px);font-weight:800;letter-spacing:.3em;color:var(--gold);text-indent:.3em;text-align:center;margin:4px 0 10px;user-select:text;-webkit-user-select:text}
+#shareUrl{font-size:12px;text-align:center;color:var(--dim);word-break:break-all;margin-bottom:12px;user-select:text;-webkit-user-select:text}
+#slots{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0}
+.slot{padding:11px 14px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.35);font-weight:700;display:flex;align-items:center;gap:10px;min-height:46px;font-size:14px}
+.slot i{width:11px;height:11px;transform:rotate(45deg);flex:none}.slot em{margin-left:auto;font-style:normal;font-size:10px;color:var(--gold);letter-spacing:.1em}
+.slot.empty{color:rgba(163,154,136,.45);font-weight:500;border-style:dashed}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;font-size:13px;margin-bottom:14px;align-items:baseline}
+.keys dt{font-weight:900;color:var(--gold);white-space:nowrap}.keys dd{color:var(--bone);line-height:1.6}
+.tips{font-size:12px;color:var(--dim);line-height:1.9;border-top:1px solid var(--line);padding-top:12px;margin-bottom:6px}.tips b{color:var(--bone)}
+.set{display:grid;grid-template-columns:110px 1fr 46px;gap:12px 14px;align-items:center;font-size:13px;margin-bottom:8px}
+.set input[type=range]{width:100%;accent-color:var(--ember)}.set select{background:rgba(0,0,0,.6);border:1px solid var(--line);padding:6px 8px}
+.set output{font-variant-numeric:tabular-nums;color:var(--dim);font-size:12px}
+#resHead{text-align:center;margin-bottom:14px}
+#resTitle{font-family:var(--serif);font-weight:800;font-size:clamp(28px,5.5vh,50px);letter-spacing:.4em;text-indent:.4em}
+#resTitle.win{color:var(--gold);text-shadow:0 0 30px rgba(232,194,122,.5)}#resTitle.lose{color:#c0503a}
+#resMain{display:flex;justify-content:center;align-items:center;gap:clamp(16px,4vw,44px);margin:6px 0 12px}
+#resRank{font-family:var(--serif);font-weight:800;font-size:clamp(64px,13vh,110px);line-height:1;color:var(--ember);text-shadow:0 0 40px rgba(255,106,42,.6)}
+#resTime{font-family:var(--serif);font-weight:800;font-size:clamp(26px,5vh,42px);font-variant-numeric:tabular-nums}
+#resNote{font-size:12px;color:var(--gold);margin-top:4px;min-height:1.4em}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:12px}
+th{font-size:10px;letter-spacing:.1em;color:var(--dim);font-weight:700;text-align:right;padding:5px 8px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+td{padding:8px;text-align:right;border-bottom:1px solid rgba(255,255,255,.07);font-variant-numeric:tabular-nums;font-weight:700}
+td .n{display:flex;align-items:center;gap:8px}td i{width:9px;height:9px;transform:rotate(45deg);flex:none}
+td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5px;margin-left:6px;font-weight:700;white-space:nowrap}
+.dbar{height:4px;background:rgba(255,255,255,.1);margin-top:4px}.dbar b{display:block;height:100%}
+#toast{position:fixed;left:50%;bottom:11%;transform:translateX(-50%);z-index:60;padding:10px 20px;background:rgba(10,6,5,.92);border:1px solid var(--gold);font-weight:700;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw;text-align:center}
+#toast.on{opacity:1}
+#loading{position:fixed;inset:0;z-index:70;background:var(--ink);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;font-family:var(--serif);letter-spacing:.4em;transition:opacity .6s}
+#loading b{font-size:44px;font-weight:800}#loading span{font-size:11px;color:var(--dim)}
+@media (max-height:520px){
+  h1{font-size:54px}.tag{display:none}.btn{padding:9px 16px;font-size:14px}#records,.foot{display:none}
+  #sTitle .wrap{max-width:none;flex-direction:row;align-items:center;gap:30px}#sTitle .wrap>div{flex:1}
+  .panel{padding:14px 18px}.keys{font-size:12px;gap:4px 14px}h2{font-size:20px}
+  #me{width:30vw}#hint{display:none}
+}
+</style>
+</head>
+<body>
+<canvas id="c" tabindex="0"></canvas>
+
+<div id="hud">
+  <div id="vig"></div><div id="low"></div><div id="flash"></div>
+  <div id="dmgLayer"></div>
+  <div id="me">
+    <div class="pname"><i id="meDot"></i><span id="meName"></span></div>
+    <div class="bar"><b id="hpLag"></b><b id="hp"></b></div>
+    <div class="bar" id="stBar"><b id="st"></b></div>
+    <div id="buffs"></div>
+    <div id="team"></div>
+  </div>
+  <div id="boss">
+    <div id="bossName">灰角竜 グラヴァルド</div>
+    <div class="bar" id="bossBar"><b id="bossLag"></b><b id="bossHp"></b></div>
+    <div id="bossMeta"><span id="mHorn">角</span><span id="mTail">尾</span><span id="mRage" class="hidden">激昂</span></div>
+  </div>
+  <div id="quest"><div id="timer">00:00.00</div><div id="carts"></div><div id="roomTag"></div></div>
+  <div id="feed"></div>
+  <div id="cross"><svg id="ring" viewBox="0 0 64 64"><circle id="ringBg" cx="32" cy="32" r="26" stroke="rgba(255,255,255,.18)" opacity="0"/><circle id="ringFg" cx="32" cy="32" r="26" stroke="#ff7a2a" stroke-dasharray="163.4" stroke-dashoffset="163.4"/></svg><div id="dot"></div></div>
+  <div id="arrow">◀</div>
+  <div id="popups"></div>
+  <div id="banner"></div>
+  <div id="hint">
+    <div><kbd>WASD</kbd>移動 <kbd>Shift</kbd>ダッシュ <kbd>Space</kbd>回避</div>
+    <div><kbd>左クリック</kbd>斬る／長押しで溜め <kbd>右クリック</kbd>ガード</div>
+    <div><kbd>E</kbd>回復薬 <kbd>Esc</kbd>メニュー</div>
+  </div>
+  <div id="stamps"><span>1 ナイス！</span><span>2 回復する！</span><span>3 尻尾を狙おう！</span><span>4 助けて！</span></div>
+  <div id="items">
+    <div class="item"><kbd>E</kbd><svg viewBox="0 0 24 24" fill="none" stroke="#6fd36a" stroke-width="1.8"><path d="M9 3h6M10 3v5l-4.5 8.5A3 3 0 0 0 8.2 21h7.6a3 3 0 0 0 2.7-4.5L14 8V3"/><path d="M7.5 14h9" /></svg><b id="potN">4</b></div>
+  </div>
+  <div id="deadMsg"><div>力尽きた</div><small id="deadSub"></small></div>
+</div>
+
+<div id="touch">
+  <div id="stickHint"></div>
+  <div id="stickBase"><div id="stickKnob"></div></div>
+  <div class="tb" id="tbAtk" data-btn="attack">攻撃</div>
+  <div class="tb" id="tbDodge" data-btn="dodge">回避</div>
+  <div class="tb" id="tbGuard" data-btn="guard">防御</div>
+  <div class="tb" id="tbPotion" data-btn="potion">回復</div>
+  <button class="tb" id="tbPause">Ⅱ</button>
+  <button class="tb" id="tbStamp">合図</button>
+  <div id="stampMenu" class="hidden"></div>
+</div>
+<div id="rotate"><svg viewBox="0 0 24 24" fill="none" stroke="#e8c27a" stroke-width="1.5"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M3 9a9 9 0 0 1 3-5M21 15a9 9 0 0 1-3 5"/></svg>端末を横向きにしてください</div>
+
+<div id="fade"></div>
+<div id="menu">
+  <section class="screen" id="sTitle">
+    <div class="wrap">
+      <div>
+        <h1>灰角<small>ASHHORN</small></h1>
+        <p class="tag">燼の火口に棲む灰角竜を狩れ。<br>一人称視点・最大4人の協力狩猟アクション。</p>
+      </div>
+      <div>
+        <label class="f" for="name">狩人の名前</label>
+        <input class="inp" id="name" maxlength="10" autocomplete="off" spellcheck="false">
+        <div class="btns">
+          <button class="btn primary" id="bHost">部屋を作る<small>URLを送って最大4人</small></button>
+          <div class="row"><input class="inp" id="joinCode" maxlength="5" placeholder="部屋コード" autocomplete="off" spellcheck="false" style="text-transform:uppercase;letter-spacing:.3em"><button class="btn" id="bJoin" style="flex:.8">参加</button></div>
+          <button class="btn" id="bSolo">ソロで狩る<small>タイムアタック</small></button>
+          <div class="row"><button class="btn sm" id="bHow">操作説明</button><button class="btn sm" id="bSet">設定</button></div>
+        </div>
+        <div id="records"></div>
+        <p class="foot">音が出ます。PC（キーボード＋マウス／ゲームパッド）・スマホ横持ち対応。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="screen panel" id="sLobby">
+    <h2>集会所</h2>
+    <p class="sub" id="lobbySub">このURLを仲間に送ると、同じ部屋に入れます。</p>
+    <div id="code">-----</div>
+    <div id="shareUrl"></div>
+    <div class="row"><button class="btn sm" id="bCopy">招待URLをコピー</button><button class="btn sm" id="bShare">共有…</button></div>
+    <div id="slots"></div>
+    <div class="row"><button class="btn primary" id="bStart">出発する</button><button class="btn" id="bLeave" style="flex:.5">退出</button></div>
+    <p class="sub" style="margin:12px 0 0" id="lobbyNote"></p>
+  </section>
+
+  <section class="screen panel" id="sHow">
+    <h2>操作説明</h2>
+    <p class="sub">攻撃を見て、避けて、弱点に叩き込む。腕前がそのままタイムに出ます。</p>
+    <dl class="keys" id="keysPc">
+      <dt>WASD ／ マウス</dt><dd>移動 ／ 視点</dd>
+      <dt>左クリック</dt><dd>斬撃（3連コンボ）。<b>長押しで溜め斬り</b>（3段階・溜めすぎると威力が落ちる）</dd>
+      <dt>右クリック</dt><dd>ガード。<b>当たる直前に構えると「弾き返し」</b>→直後の攻撃がカウンター斬りに</dd>
+      <dt>Space</dt><dd>回避。<b>攻撃をすり抜けると「見切り」</b>で攻撃力アップ＋スタミナ回復</dd>
+      <dt>Shift ／ E</dt><dd>ダッシュ ／ 回復薬（飲む間は無防備）</dd>
+      <dt>1〜4</dt><dd>仲間への合図</dd>
+    </dl>
+    <dl class="keys hidden" id="keysTouch">
+      <dt>左側をドラッグ</dt><dd>移動（いっぱいに倒すとダッシュ）</dd>
+      <dt>右側をドラッグ</dt><dd>視点</dd>
+      <dt>攻撃</dt><dd>斬撃（3連コンボ）。<b>長押しで溜め斬り</b>。押したままドラッグで狙える</dd>
+      <dt>防御</dt><dd><b>当たる直前に押すと「弾き返し」</b>→直後の攻撃がカウンター斬りに</dd>
+      <dt>回避</dt><dd><b>攻撃をすり抜けると「見切り」</b>で攻撃力アップ</dd>
+    </dl>
+    <div class="tips">
+      <b>頭</b>が弱点（視点を上げて狙う）。<b>脚</b>を斬り続けると転倒して頭が下りてくる。<b>背中</b>は硬く弾かれる。<br>
+      <b>尻尾</b>は切断でき、回転攻撃の範囲が縮む。突進は<b>外周の岩</b>に誘導すると角が刺さって大きな隙になる。<br>
+      力尽きてよいのはパーティ全体で<b>2回まで</b>。3回目でクエスト失敗。
+    </div>
+    <div class="btns"><button class="btn sm" data-back>戻る</button></div>
+  </section>
+
+  <section class="screen panel" id="sSet">
+    <h2>設定</h2>
+    <p class="sub">設定はこの端末に保存されます。</p>
+    <div class="set"><span>視点感度</span><input type="range" id="oSens" min="0.3" max="2.5" step="0.05"><output id="oSensV"></output></div>
+    <div class="set"><span>上下反転</span><label><input type="checkbox" id="oInv"> 反転する</label><span></span></div>
+    <div class="set"><span>画質</span><select id="oQual"><option value="high">高（影・発光あり）</option><option value="mid">中（発光あり）</option><option value="low">低（軽量）</option></select><span></span></div>
+    <div class="set"><span>音量</span><input type="range" id="oVol" min="0" max="1" step="0.05"><output id="oVolV"></output></div>
+    <div class="set"><span>BGM</span><input type="range" id="oMus" min="0" max="1" step="0.05"><output id="oMusV"></output></div>
+    <div class="btns"><button class="btn sm" data-back>戻る</button></div>
+  </section>
+
+  <section class="screen panel" id="sPause">
+    <h2>メニュー</h2>
+    <p class="sub" id="pauseSub"></p>
+    <div class="btns">
+      <button class="btn primary" id="bResume">狩りに戻る</button>
+      <button class="btn" id="bPHow">操作説明</button>
+      <button class="btn" id="bPSet">設定</button>
+      <button class="btn" id="bQuit">リタイアしてタイトルへ</button>
+    </div>
+  </section>
+
+  <section class="screen panel wide" id="sResult">
+    <div id="resHead"><div id="resTitle"></div></div>
+    <div id="resMain"><div id="resRank"></div><div><div id="resTime"></div><div id="resNote"></div></div></div>
+    <table><thead><tr><th>狩人</th><th>与ダメージ</th><th>弱点</th><th>見切り</th><th>弾き返し</th><th>被ダメ</th><th>力尽き</th></tr></thead><tbody id="resRows"></tbody></table>
+    <div class="row"><button class="btn primary" id="bAgain">もう一度</button><button class="btn" id="bResCopy">結果をコピー</button><button class="btn" id="bResQuit" style="flex:.7">タイトルへ</button></div>
+    <p class="sub" style="margin:10px 0 0" id="resWait"></p>
+  </section>
+
+  <section class="screen panel" id="sMsg">
+    <h2 id="msgTitle"></h2>
+    <p class="sub" id="msgBody"></p>
+    <div class="btns"><button class="btn sm" id="bMsgOk">タイトルへ</button></div>
+  </section>
+</div>
+<div id="toast"></div>
+<div id="loading"><b>灰角</b><span>LOADING</span></div>
+<script src="game.js"></script>
+</body>
+</html>

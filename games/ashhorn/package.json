@@ -1,0 +1,12 @@
+{
+  "name": "ashhorn",
+  "private": true,
+  "version": "1.0.0",
+  "description": "灰角 ASHHORN - 一人称協力狩猟アクション",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --minify --format=iife --target=es2020 --outfile=game.js",
+    "dev": "esbuild src/main.js --bundle --format=iife --target=es2020 --outfile=game.js --sourcemap --watch"
+  },
+  "dependencies": { "peerjs": "1.5.5", "three": "0.187.0" },
+  "devDependencies": { "esbuild": "^0.25.0" }
+}
