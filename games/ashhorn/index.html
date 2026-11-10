@@ -142,6 +142,8 @@ label.f{display:block;font-size:11px;font-weight:700;letter-spacing:.15em;color:
 .btn:hover,.btn:focus-visible{background:rgba(255,106,42,.22);border-color:var(--ember);padding-left:28px;outline:none}
 .btn.primary{background:linear-gradient(90deg,rgba(255,106,42,.5),rgba(255,106,42,.12));border-color:var(--ember)}
 .btn.sm{padding:9px 16px;font-size:13px}.btn:disabled{opacity:.4;pointer-events:none}
+.qst{display:flex;gap:6px}.qst button{flex:1;padding:8px 2px;border:1px solid var(--line);background:rgba(0,0,0,.5);font-weight:900;font-size:14px;letter-spacing:.06em;transition:all .15s}.qst button small{display:block;font-size:10px;font-weight:700;color:var(--gold);letter-spacing:.2em}
+.qst button.sel{border-color:var(--gold);background:rgba(232,194,122,.22)}.qst button:disabled{opacity:.55}
 .wpn{display:flex;gap:6px}.wpn button{flex:1;padding:8px 2px;border:1px solid var(--line);background:rgba(0,0,0,.5);font-weight:900;font-size:15px;letter-spacing:.1em;transition:all .15s}.wpn button small{display:block;font-size:10px;font-weight:500;color:var(--dim);letter-spacing:.2em}
 .wpn button.sel{border-color:var(--ember);background:rgba(255,106,42,.32)}.wdesc{font-size:11px;color:var(--dim);margin:5px 0 10px;min-height:3em;line-height:1.5}
 .row{display:flex;gap:9px}.row>*{flex:1}
@@ -250,12 +252,14 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
     <div class="wrap">
       <div>
         <h1>灰角<small>ASHHORN</small></h1>
-        <p class="tag">燼の火口に棲む灰角竜を狩れ。<br>武器は4種、視点は一人称と三人称。最大4人の協力狩猟アクション。</p>
+        <p class="tag">燼の火口に棲む竜を狩れ。相手は3体、RTA向けから上級まで。<br>武器は4種、視点は一人称と三人称。最大4人の協力狩猟アクション。</p>
       </div>
       <div>
         <label class="f" for="name">狩人の名前</label>
         <input class="inp" id="name" maxlength="10" autocomplete="off" spellcheck="false">
-        <label class="f" style="margin-top:12px">武器</label>
+        <label class="f" style="margin-top:12px">狩猟対象</label>
+        <div class="qst" id="qTitle"></div><div class="wdesc" id="qdescTitle"></div>
+        <label class="f">武器</label>
         <div class="wpn" id="wpnTitle"></div><div class="wdesc" id="wdescTitle"></div>
         <div class="btns" style="margin-top:0">
           <button class="btn primary" id="bHost">部屋を作る<small>URLを送って最大4人</small></button>
@@ -276,6 +280,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
     <div id="shareUrl"></div>
     <div class="row"><button class="btn sm" id="bCopy">招待URLをコピー</button><button class="btn sm" id="bShare">共有…</button></div>
     <div id="slots"></div>
+    <div class="qst" id="qLobby"></div><div class="wdesc" id="qdescLobby"></div>
     <div class="wpn" id="wpnLobby"></div><div class="wdesc" id="wdescLobby"></div>
     <div class="row"><button class="btn primary" id="bStart">出発する</button><button class="btn" id="bLeave" style="flex:.5">退出</button></div>
     <p class="sub" style="margin:12px 0 0" id="lobbyNote"></p>

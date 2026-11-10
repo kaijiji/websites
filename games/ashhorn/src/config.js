@@ -51,6 +51,17 @@ export const BOSS = {
   walk: 4.2, run: 15.5, turn: 1.9,
 };
 
+// 狩猟対象。scale=大きさ, stag=怯み・転倒に必要な量の倍率, dmg=攻撃力倍率, cool=攻撃間隔の加算[s],
+// phases=激昂する体力割合, ranks=[S,A,B] のクリアタイム[s]
+export const SPECIES = {
+  skrit: { name: '灰走竜 スクリット', tag: 'RTA', desc: '小型ですばしこい。体力が低く、30秒前後の最速討伐を競う相手。', hp: 1200, scale: 0.46, stag: 0.22, speed: 1.35, dmg: 0.5, cool: -0.3, intro: false,
+    attacks: ['bite', 'claw', 'tailspin', 'leap'], phases: [], ranks: [25, 35, 50], col: { hide: 0x4a3a2e, plate: 0x8a6a48, bone: 0xe8dcc0, glow: 0xffb030 }, horn: 0.6, dorsal: 1.7 },
+  dolgan: { name: '岩殻竜 ドルガン', tag: '中級', desc: 'ひとまわり小さく、動きが読みやすい。体力半分で一度だけ激昂。1人でじっくり遊ぶのに丁度いい。', hp: 4200, scale: 0.78, stag: 0.6, speed: 0.95, dmg: 0.7, cool: 0.45, intro: true,
+    attacks: ['bite', 'claw', 'tailspin', 'charge', 'leap', 'fireballs'], phases: [0.5], ranks: [150, 240, 360], col: { hide: 0x363d31, plate: 0x6b7355, bone: 0xd8d2b0, glow: 0x35c890 }, horn: 1.25, dorsal: 0.65 },
+  gravald: { name: '灰角竜 グラヴァルド', tag: '上級', desc: '巨大で攻撃が多彩。二度激昂し、ブレスと噴火を使う。仲間と挑みたい相手。', hp: 8000, scale: 1, stag: 1, speed: 1, dmg: 1, cool: 0, intro: true,
+    attacks: ['bite', 'claw', 'tailspin', 'charge', 'leap', 'breath', 'fireballs', 'eruption'], phases: [0.66, 0.33], ranks: [300, 480, 720], col: { hide: 0x322c29, plate: 0x5a5049, bone: 0xc9bea6, glow: 0xe03a0c }, horn: 1, dorsal: 1 },
+};
+export const SPECIES_IDS = ['skrit', 'dolgan', 'gravald'];
 export const RANKS = [ // クリアタイム [s] 以下でそのランク
   { r: 'S', t: 300 }, { r: 'A', t: 480 }, { r: 'B', t: 720 }, { r: 'C', t: Infinity },
 ];

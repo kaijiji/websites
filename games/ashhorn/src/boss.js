@@ -1,6 +1,6 @@
 // 灰角竜グラヴァルド：モデル（プリミティブ組み立て）、手続きアニメーション、AI、攻撃判定
 import * as THREE from 'three';
-import { BOSS, ARENA_R } from './config.js';
+import { BOSS, ARENA_R, SPECIES, SPECIES_IDS } from './config.js';
 import { clamp, lerp, sat, smooth, easeOut, easeIn, seg, angDiff, turnToward, damp, dampAngle, rand, pick, weightedPick, TAU } from './util.js';
 
 export const ACTIONS = ['idle', 'intro', 'roar', 'bite', 'claw', 'tailspin', 'charge', 'skid', 'crash', 'leap', 'breath', 'fireballs', 'eruption', 'flinch', 'topple', 'stunned', 'death'];
@@ -40,7 +40,7 @@ function buildModel(b) {
   for (let i = 0; i < 8; i++) {
     const z = 2.5 - i * 0.78, w = 1.9 - Math.abs(i - 2.5) * 0.2, y = 1.42 + Math.sin((i / 7) * Math.PI) * 0.32 - (i > 5 ? 0.25 : 0);
     add(body, boxG, plate, 0, y, z, w, 0.5, 0.95, 0.12 * (i % 2 ? 1 : -1), 0, 0);
-    spike(body, 0, y + 0.75 - Math.abs(i - 3) * 0.06, z, 0.3, 1.5 - Math.abs(i - 3) * 0.14, -0.35);
+    (b.dorsal || (b.dorsal = [])).push(spike(body, 0, y + 0.75 - Math.abs(i - 3) * 0.06, z, 0.3, 1.5 - Math.abs(i - 3) * 0.14, -0.35));
     add(body, boxG, magma, 0, y - 0.18, z - 0.4, w * 0.85, 0.16, 0.2);
   }
   for (const s of [-1, 1]) { // 肩と腰の装甲
@@ -65,7 +65,7 @@ function buildModel(b) {
     add(head, new THREE.SphereGeometry(0.13, 8, 6), eye, s * 0.62, 0.3, 1.1, 1, 1, 1);
     add(head, boxG, plate, s * 0.66, 0.45, 1.05, 0.25, 0.14, 0.5, 0, 0, s * 0.3);
     // 大角：3節でねじれて前へ
-    const h0 = grp(head, s * 0.75, 0.6, 0.35); h0.rotation.set(-0.5, 0, s * -1.05);
+    const h0 = grp(head, s * 0.75, 0.6, 0.35); h0.rotation.set(-0.5, 0, s * -1.05); (b.horns || (b.horns = [])).push(h0);
     add(h0, new THREE.CylinderGeometry(0.3, 0.42, 1.2, 6), bone, 0, 0.6, 0, 1, 1, 1);
     const h1 = grp(h0, 0, 1.2, 0); h1.rotation.set(0.75, 0, s * 0.55);
     add(h1, new THREE.CylinderGeometry(0.2, 0.3, 1.2, 6), bone, 0, 0.6, 0, 1, 1, 1);
@@ -140,7 +140,7 @@ function buildModel(b) {
 // ---------------------------------------------------------------- 攻撃ごとの定義
 // pose: 姿勢 / move: ホストでの移動 / cues: 全員で鳴らす演出 / host: ホストだけが行う処理 / hits: 攻撃判定
 // 予兆：地面の危険範囲と警告音
-const tele = (b, kind, o, dur, follow = true, x, z) => { b.env.fx.zone(kind, o, dur, follow ? b : null, x ?? b.x, z ?? b.z, b.yaw); b.env.audio.play('warn', 0.7, b.distLocal()); };
+const tele = (b, kind, o, dur, follow = true, x, z) => { const k = b.sc; o = { ...o, r: o.r && o.r * k, len: o.len && o.len * k, w: o.w && o.w * k }; b.env.fx.zone(kind, o, dur, follow ? b : null, x ?? b.x, z ?? b.z, b.yaw); b.env.audio.play('warn', 0.7, b.distLocal()); };
 const A = {};
 A.idle = { dur: Infinity, pose() {} };
 
@@ -286,7 +286,7 @@ A.leap = { // ap = [着地点x, 着地点z, 出発x, 出発z]
       const f = seg(t, 0.9, 1.75);
       let x = lerp(b.ap[2], b.ap[0], f), z = lerp(b.ap[3], b.ap[1], f);
       const r = Math.hypot(x, z); if (r > ARENA_R - 4) { x *= (ARENA_R - 4) / r; z *= (ARENA_R - 4) / r; }
-      b.x = x; b.z = z; b.y = Math.sin(f * Math.PI) * 7.5;
+      b.x = x; b.z = z; b.y = Math.sin(f * Math.PI) * 7.5 * b.sc;
     } else b.y = 0;
   },
   cues: [[0.0, (b) => b.env.audio.play('snarl', 0.9, b.distLocal())], [0.82, (b) => tele(b, 'circle', { r: 4.6 }, 0.93, false, b.ap[0], b.ap[1])], [0.88, (b) => { b.env.audio.play('swingHeavy', 1.5, b.distLocal()); V.set(b.x, 0.2, b.z); b.env.fx.dust(V, 30, 8); b.env.shake(0.3, b.x, b.z, 25); }],
@@ -416,11 +416,22 @@ export class Boss {
     this.reset(1);
   }
 
-  reset(nPlayers) {
+  setSpecies(id) {
+    this.spId = SPECIES[id] ? id : 'gravald';
+    const sp = (this.sp = SPECIES[this.spId]), k = (this.sc = sp.scale), m = this.mats;
+    this.root.scale.setScalar(k);
+    m.hide.color.setHex(sp.col.hide); m.plate.color.setHex(sp.col.plate); m.bone.color.setHex(sp.col.bone); m.magma.emissive.setHex(sp.col.glow); this.light.color.setHex(sp.col.glow);
+    for (const h of this.horns) h.scale.setScalar(sp.horn);
+    for (const d of this.dorsal) { if (d.userData.h == null) d.userData.h = d.scale.y; d.scale.y = d.userData.h * sp.dorsal; }
+    for (const s of this.spheres) { if (s.r0 == null) { s.r0 = s.r; s.solid0 = s.solid; } s.r = s.r0 * k; if (s.solid0) s.solid = s.solid0 * k; }
+  }
+
+  reset(nPlayers, spId) {
+    this.setSpecies(spId || this.spId || 'gravald');
     this.x = 0; this.z = -6; this.y = 0; this.yaw = 0;
-    this.maxHp = Math.round(BOSS.hp * BOSS.hpScale[clamp(nPlayers, 1, 4) - 1]); this.hp = this.maxHp;
-    this.scale = BOSS.hpScale[clamp(nPlayers, 1, 4) - 1];
-    this.phase = 1; this.speedMul = 1;
+    this.maxHp = Math.round(this.sp.hp * BOSS.hpScale[clamp(nPlayers, 1, 4) - 1]); this.hp = this.maxHp;
+    this.scale = BOSS.hpScale[clamp(nPlayers, 1, 4) - 1] * this.sp.stag;
+    this.phase = 1; this.speedMul = this.sp.speed;
     this.action = 'idle'; this.t = 0; this.seq = 0; this.ap = [0, 0, 0, 0]; this.lastT = 0;
     this.cool = 1.5; this.lastAttack = ''; this.queue = [];
     this.headAcc = 0; this.legAcc = 0; this.tailAcc = 0; this.headTotal = 0; this.parryAcc = 0; this.flankT = 0; this.headN = 0; this.legN = 0; this.stunAcc = 0; this.stunN = 0;
@@ -447,7 +458,7 @@ export class Boss {
   pawFx() { this.fwd(V, 3); V.y = 0.15; this.env.fx.dust(V, 14, 6); this.env.audio.play('step', 0.7, this.distLocal()); }
   alivePlayers() { return this.players.filter((p) => p.alive); }
   targetPos() { return this.players.find((p) => p.id === this.targetId && p.alive) || this.alivePlayers()[0] || null; }
-  emit(ev) { this.env.emit(ev); }
+  emit(ev) { if (ev.dmg) ev.dmg = Math.round(ev.dmg * this.sp.dmg); if (ev.k === 'ring') { ev.r *= this.sc; } this.env.emit(ev); }
 
   start(name, ap) {
     const prev = A[this.action]; if (prev && prev.end) prev.end(this);
@@ -480,7 +491,7 @@ export class Boss {
     if (act.next) { this._hostT = -1; return this.start(act.next); }
     if (this.pendingRoar) { this.pendingRoar = false; this._hostT = -1; return this.start('roar'); }
     if (this.queue.length) { const q = this.queue.shift(); this._hostT = -1; return this.start(q[0], q[1]); }
-    this.cool = (this.phase === 1 ? rand(0.9, 1.5) : this.phase === 2 ? rand(0.55, 1.05) : rand(0.3, 0.75));
+    this.cool = Math.max(0.25, (this.phase === 1 ? rand(0.9, 1.5) : this.phase === 2 ? rand(0.55, 1.05) : rand(0.3, 0.75)) + this.sp.cool);
     this.pickTarget();
     this._hostT = -1;
     this.start('idle');
@@ -500,25 +511,26 @@ export class Boss {
   think(dt) {
     const tg = this.targetPos();
     if (!tg) { this.pickTarget(); return; }
-    const dx = tg.x - this.x, dz = tg.z - this.z, d = Math.hypot(dx, dz), want = Math.atan2(dx, dz), da = angDiff(this.yaw, want);
+    const dx = tg.x - this.x, dz = tg.z - this.z, d = Math.hypot(dx, dz), want = Math.atan2(dx, dz), da = angDiff(this.yaw, want), ds = d / this.sc;
     this.yaw = turnToward(this.yaw, want, BOSS.turn * this.speedMul * dt * (Math.abs(da) > 1.5 ? 1.5 : 1));
-    if (d > 6.0 && Math.abs(da) < 1.0) this.advance(BOSS.walk * this.speedMul * dt * (d > 14 ? 1.5 : 1));
-    if (Math.abs(da) > 1.1 && d < 8) this.flankT += dt; else this.flankT = Math.max(0, this.flankT - dt * 2);
+    if (ds > 6.0 && Math.abs(da) < 1.0) this.advance(BOSS.walk * this.speedMul * dt * (ds > 14 ? 1.5 : 1));
+    if (Math.abs(da) > 1.1 && ds < 8) this.flankT += dt; else this.flankT = Math.max(0, this.flankT - dt * 2);
     this.cool -= dt;
     if (this.cool > 0) return;
     // 後ろに誰かいるか
     let behind = false;
-    for (const p of this.alivePlayers()) { const a = Math.abs(angDiff(this.yaw, Math.atan2(p.x - this.x, p.z - this.z))); if (a > 1.9 && Math.hypot(p.x - this.x, p.z - this.z) < (this.tailCut ? 7 : 10.5)) behind = true; }
+    for (const p of this.alivePlayers()) { const a = Math.abs(angDiff(this.yaw, Math.atan2(p.x - this.x, p.z - this.z))); if (a > 1.9 && Math.hypot(p.x - this.x, p.z - this.z) < (this.tailCut ? 7 : 10.5) * this.sc) behind = true; }
     const ph = this.phase, o = [], ad = Math.abs(da);
-    const push = (n, w, ap) => o.push({ n, w: w * (n === this.lastAttack ? 0.3 : 1), ap });
+    const can = this.sp.attacks;
+    const push = (n, w, ap) => can.includes(n === 'combo' ? 'claw' : n) && o.push({ n, w: w * (n === this.lastAttack ? 0.3 : 1), ap });
     const side = da > 0 ? 1 : -1;
     if (behind) push('tailspin', 5, [pick([1, -1])]);
     if (this.flankT > 1.3) push('tailspin', 6, [side]);
-    if (d < 7 && ad < 0.95) { push('bite', 4); push('claw', 4, [side]); if (ph >= 2) push('combo', 4, [side]); push('tailspin', 1.2, [side]); if (ph >= 2) push('leap', 1); }
-    if (d >= 7 && d < 22) { push('leap', 3); if (ad < 0.7) push('breath', d < 16 ? 3 : 1.5, [pick([1, -1])]); push('charge', d > 12 ? 3 : 1); if (ph >= 2) push('fireballs', 2.5); }
-    if (d >= 22) { push('charge', 4); if (ph >= 2) push('fireballs', 3.5); push('leap', 1.5); }
+    if (ds < 7 && ad < 0.95) { push('bite', 4); push('claw', 4, [side]); if (ph >= 2) push('combo', 4, [side]); push('tailspin', 1.2, [side]); if (ph >= 2) push('leap', 1); }
+    if (ds >= 7 && ds < 22) { push('leap', 3); if (ad < 0.7) push('breath', ds < 16 ? 3 : 1.5, [pick([1, -1])]); push('charge', ds > 12 ? 3 : 1); if (ph >= 2) push('fireballs', 2.5); }
+    if (ds >= 22) { push('charge', 4); if (ph >= 2) push('fireballs', 3.5); push('leap', 1.5); }
     if (ph >= 3 && this.eruptCd <= 0) push('eruption', 3.5);
-    if (!o.length) { if (ad > 1.4 && d < 9) push('tailspin', 1, [side]); else return; }
+    if (!o.length) { if (ad > 1.4 && ds < 9) push('tailspin', 1, [side]); else return; }
     const c = weightedPick(o);
     this.lastAttack = c.n;
     if (c.n === 'eruption') this.eruptCd = 18;
@@ -555,8 +567,8 @@ export class Boss {
       if (!blunt) this.tailAcc += dmg;
       if (!this.tailCut && this.tailAcc >= BOSS.tailCut * sc) { this.tailCut = true; this.emit({ k: 'break', p: 'tail', by: attackerId }); if (!armored) { this.queue.length = 0; this._hostT = -1; this.start('flinch', [1]); } }
     }
-    const np = this.hp <= this.maxHp * 0.33 ? 3 : this.hp <= this.maxHp * 0.66 ? 2 : 1;
-    if (np > this.phase) { this.phase = np; this.speedMul = np === 2 ? 1.12 : 1.22; this.pendingRoar = true; this.emit({ k: 'phase', p: np }); }
+    let np = 1; for (const th of this.sp.phases) if (this.hp <= this.maxHp * th) np++;
+    if (np > this.phase) { this.phase = np; this.speedMul = this.sp.speed * (np === 2 ? 1.12 : 1.22); this.pendingRoar = true; this.emit({ k: 'phase', p: np }); }
   }
   applyParry(attackerId, flinchOk) {
     if (this.dead) return;
@@ -569,7 +581,7 @@ export class Boss {
   // ---- 通信
   snapshot() {
     return [+this.x.toFixed(2), +this.z.toFixed(2), +this.y.toFixed(2), +this.yaw.toFixed(3), ACTIONS.indexOf(this.action), this.seq, +this.t.toFixed(3),
-      this.ap.map((v) => +(+v).toFixed(2)), Math.round(this.hp), this.phase, (this.tailCut ? 1 : 0) | (this.hornBroken ? 2 : 0) | (this.active ? 4 : 0) | (this.dead ? 8 : 0), this.maxHp];
+      this.ap.map((v) => +(+v).toFixed(2)), Math.round(this.hp), this.phase, (this.tailCut ? 1 : 0) | (this.hornBroken ? 2 : 0) | (this.active ? 4 : 0) | (this.dead ? 8 : 0), this.maxHp, SPECIES_IDS.indexOf(this.spId)];
   }
   applySnapshot(s) {
     this.sx = s[0]; this.sz = s[1]; this.sy = s[2]; this.syaw = s[3];
@@ -577,6 +589,7 @@ export class Boss {
     if (s[5] !== this.seq) { this.start(name, s[7]); this.seq = s[5]; this.t = s[6]; this.lastT = s[6] - 1e-6; if (this._first) { this.x = this.sx; this.z = this.sz; this.yaw = this.syaw; this.y = this.sy; this._first = false; } }
     else { if (Math.abs(this.t - s[6]) > 0.25) this.t = s[6]; this.ap = s[7]; }
     this.hp = s[8]; this.maxHp = s[11];
+    if (s[12] != null && SPECIES_IDS[s[12]] && SPECIES_IDS[s[12]] !== this.spId) this.setSpecies(SPECIES_IDS[s[12]]);
     if (s[9] !== this.phase) { this.phase = s[9]; }
     const fl = s[10];
     if ((fl & 1) && !this.tailCut) this.setTailCut(false);
@@ -614,7 +627,7 @@ export class Boss {
     this._px = this.x; this._pz = this.z; this._pyaw = this.yaw;
     const sp = dt > 0 ? moved / dt : 0;
     const prevPhase = this.walkPhase;
-    this.walkPhase += moved * (sp > 9 ? 0.5 : 0.78) + turned * 2.4;
+    this.walkPhase += moved * (sp > 9 ? 0.5 : 0.78) / this.sc + turned * 2.4;
     const amp = clamp(sp * 0.09 + (dt > 0 ? turned / dt : 0) * 0.16, 0, sp > 9 ? 0.85 : 0.55);
     this.walkAmp = damp(this.walkAmp || 0, amp, 10, dt);
     const wa = this.walkAmp, ph = this.walkPhase;
@@ -624,7 +637,7 @@ export class Boss {
       P.bodyY += Math.sin(ph * 2) * 0.12 * wa; P.bodyRoll = Math.sin(ph) * 0.07 * wa; P.neckYaw = Math.sin(ph) * 0.1 * wa; P.tailYaw = -Math.sin(ph) * 0.2 * wa;
       // 足音
       if (dt > 0 && Math.floor(ph / Math.PI) !== Math.floor(prevPhase / Math.PI) && wa > 0.12) {
-        const d = this.distLocal(); this.env.audio.play('step', 0.5 + wa * 0.7, d); this.env.shake(0.16 + wa * 0.3, this.x, this.z, 20);
+        const d = this.distLocal(); this.env.audio.play('step', 0.5 + wa * 0.7, d); this.env.shake((0.16 + wa * 0.3) * this.sc, this.x, this.z, 20);
         const leg = this.legs[Math.floor(ph / Math.PI) % 2 ? 'fl' : 'fr'].foot.getWorldPosition(V); V.y = 0.1; this.env.fx.dust(V, sp > 9 ? 14 : 6, sp > 9 ? 7 : 3);
       }
     }
@@ -714,6 +727,8 @@ export class Boss {
     const act = A[this.action]; if (!act.hits) return out;
     const list = this._hl || (this._hl = []); list.length = 0;
     act.hits(this, this.t, list);
+    const k = this.sc, dm = this.sp.dmg;
+    for (const h of list) { if (k !== 1) { if (h.r) h.r *= k; if (h.r0) h.r0 *= k; if (h.r1) h.r1 *= k; if (h.len) h.len *= k; } h.dmg = Math.round(h.dmg * dm); }
     for (const h of list) {
       let ok = false;
       const dx = p.x - h.x, dz = p.z - h.z, d = Math.hypot(dx, dz);

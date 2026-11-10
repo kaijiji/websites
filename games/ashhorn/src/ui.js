@@ -1,5 +1,5 @@
 // HUD とメニュー（DOM）
-import { PLAYER, PLAYER_COLORS, STAMPS, CARTS, RANKS, MAX_PLAYERS, WEAPONS, WEAPON_IDS } from './config.js';
+import { PLAYER, PLAYER_COLORS, STAMPS, CARTS, MAX_PLAYERS, WEAPONS, WEAPON_IDS, SPECIES, SPECIES_IDS } from './config.js';
 import { fmtTime, sat, store } from './util.js';
 import { Vector3 } from 'three';
 import { LOCKS } from './player.js';
@@ -58,11 +58,19 @@ export class UI {
     $('oLock').checked = s.autoLock; $('oLock').addEventListener('change', () => { s.autoLock = $('oLock').checked; g.player.lock = s.autoLock ? 2 : 0; g.saveSettings(); });
     $('oView').value = s.view; $('oView').addEventListener('change', () => { s.view = $('oView').value; g.player.tp = s.view === 'tp'; g.saveSettings(); });
     for (const id of ['wpnTitle', 'wpnLobby']) for (const w of WEAPON_IDS) { const b = document.createElement('button'); b.dataset.w = w; b.innerHTML = `${WEAPONS[w].name}<small>${WEAPONS[w].sub}</small>`; b.addEventListener('click', () => { g.audio.init(); g.audio.play('ui'); g.setWeapon(w); }); $(id).appendChild(b); }
-    this.renderWeapons();
+    for (const id of ['qTitle', 'qLobby']) for (const q of SPECIES_IDS) { const b = document.createElement('button'); b.dataset.q = q; b.innerHTML = `${SPECIES[q].name.split(' ')[1]}<small>${SPECIES[q].tag}</small>`; b.addEventListener('click', () => { g.audio.init(); g.audio.play('ui'); g.setQuest(q); }); $(id).appendChild(b); }
+    this.renderWeapons(); this.renderQuests();
     $('oQual').value = s.quality; $('oQual').addEventListener('change', () => { s.quality = $('oQual').value; s.qualityAuto = false; g.applySettings(true); g.saveSettings(); });
     if (g.input.isTouch) { $('keysPc').classList.add('hidden'); $('keysTouch').classList.remove('hidden'); }
   }
 
+  renderQuests() {
+    const g = this.g, cur = g.quest, sp = SPECIES[cur], locked = g.mode === 'multi' && !g.net.isHost;
+    for (const b of document.querySelectorAll('.qst button')) { b.classList.toggle('sel', b.dataset.q === cur); b.disabled = locked && b.parentNode.id === 'qLobby'; }
+    const fmt = (t) => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    for (const id of ['qdescTitle', 'qdescLobby']) $(id).innerHTML = `<b style="color:var(--bone)">${sp.name}</b>　${sp.desc}<br>ランクS ${fmt(sp.ranks[0])}以内 ／ A ${fmt(sp.ranks[1])}以内${locked && id === 'qdescLobby' ? '（狩猟対象はホストが選びます）' : ''}`;
+    this.renderRecords();
+  }
   renderWeapons() {
     const cur = this.g.settings.weapon;
     for (const b of document.querySelectorAll('.wpn button')) b.classList.toggle('sel', b.dataset.w === cur);
@@ -92,10 +100,11 @@ export class UI {
   message(title, body) { $('msgTitle').textContent = title; $('msgBody').textContent = body; this.show('sMsg'); }
 
   renderRecords() {
-    const rec = store.get('ashhorn.records', {});
+    const rec = store.get('ashhorn.records', {}), q = this.g.quest;
+    for (let n = 1; n <= MAX_PLAYERS; n++) if (rec[n] && !rec['gravald:' + n]) { rec['gravald:' + n] = rec[n]; delete rec[n]; store.set('ashhorn.records', rec); } // 旧形式の記録を引き継ぐ
     const rows = [];
-    for (let n = 1; n <= MAX_PLAYERS; n++) if (rec[n]) rows.push(`${n === 1 ? 'ソロ' : n + '人'} <b>${fmtTime(rec[n].t)}</b>（${rec[n].r}）`);
-    $('records').innerHTML = rows.length ? '自己ベスト　' + rows.join('　') : '';
+    for (let n = 1; n <= MAX_PLAYERS; n++) { const r = rec[q + ':' + n]; if (r) rows.push(`${n === 1 ? 'ソロ' : n + '人'} <b>${fmtTime(r.t)}</b>（${r.r}）`); }
+    $('records').innerHTML = rows.length ? `${SPECIES[q].name.split(' ')[1]} 自己ベスト　` + rows.join('　') : '';
   }
 
   // ---- ロビー
@@ -109,6 +118,7 @@ export class UI {
     }
     $('slots').innerHTML = html;
     $('bStart').classList.toggle('hidden', !isHost);
+    this.renderQuests();
     $('lobbyNote').textContent = isHost ? '人数に応じて竜の体力が増えます。1人でも出発できます。' : 'ホストの出発を待っています…';
   }
 
@@ -208,10 +218,10 @@ export class UI {
     }).join('');
     $('bAgain').classList.toggle('hidden', !isHost);
     $('resWait').textContent = isHost ? '' : 'ホストが「もう一度」を押すと再出発します。';
-    const n = res.rows.length;
-    this.resultText = win ? `【灰角 ASHHORN】灰角竜グラヴァルドを討伐！ ${fmtTime(res.time)} ランク${res.rank}（${n === 1 ? 'ソロ' : n + '人'}）\n${location.origin}${location.pathname}` : `【灰角 ASHHORN】灰角竜グラヴァルドに敗北…（${n === 1 ? 'ソロ' : n + '人'}）\n${location.origin}${location.pathname}`;
+    const n = res.rows.length, bn = (SPECIES[res.sp] || SPECIES.gravald).name.replace(' ', '');
+    this.resultText = win ? `【灰角 ASHHORN】${bn}を討伐！ ${fmtTime(res.time)} ランク${res.rank}（${n === 1 ? 'ソロ' : n + '人'}）\n${location.origin}${location.pathname}` : `【灰角 ASHHORN】${bn}に敗北…（${n === 1 ? 'ソロ' : n + '人'}）\n${location.origin}${location.pathname}`;
     this.show('sResult');
   }
 }
 
-export function rankOf(time) { for (const r of RANKS) if (time <= r.t) return r.r; return 'C'; }
+export function rankOf(time, ranks) { return time <= ranks[0] ? 'S' : time <= ranks[1] ? 'A' : time <= ranks[2] ? 'B' : 'C'; }

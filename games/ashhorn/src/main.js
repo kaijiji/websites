@@ -8,7 +8,7 @@ import { Boss, Hazards } from './boss.js';
 import { Player, Avatar, ST } from './player.js';
 import { Net } from './net.js';
 import { UI, rankOf } from './ui.js';
-import { PLAYER, PLAYER_COLORS, STAMPS, CARTS, QUEST_LIMIT, MAX_PLAYERS, BOSS, WEAPONS } from './config.js';
+import { PLAYER, PLAYER_COLORS, STAMPS, CARTS, QUEST_LIMIT, MAX_PLAYERS, WEAPONS, SPECIES } from './config.js';
 import { clamp, sat, store, damp } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -19,9 +19,11 @@ class Game {
     const canvas = $('c');
     this.input = new Input(canvas, $('touch'));
     if (this.input.isTouch) document.body.classList.add('touch');
-    const def = { sens: 1, invertY: false, vol: 0.8, music: 0.55, quality: this.input.isTouch ? 'mid' : 'high', qualityAuto: true, weapon: 'great', view: 'fp', autoLock: false };
+    const def = { sens: 1, invertY: false, vol: 0.8, music: 0.55, quality: this.input.isTouch ? 'mid' : 'high', qualityAuto: true, weapon: 'great', view: 'fp', autoLock: false, quest: 'dolgan' };
     this.settings = Object.assign(def, store.get('ashhorn.settings', {}));
     if (!WEAPONS[this.settings.weapon]) this.settings.weapon = 'great';
+    if (!SPECIES[this.settings.quest]) this.settings.quest = 'dolgan';
+    this.quest = this.settings.quest;
     this.world = new World(canvas, this.settings.quality);
     this.audio = new AudioSys();
     this.fx = new Fx(this.world, $('dmgLayer'));
@@ -38,6 +40,7 @@ class Game {
       emit: (ev) => this.emit(ev),
     };
     this.boss = new Boss(this.world.scene, env);
+    this.boss.reset(1, this.quest);
     this.hazards = new Hazards(env);
     this.player = new Player(this.world, this.input, {
       audio: this.audio, fx: this.fx,
@@ -99,7 +102,7 @@ class Game {
   // ---- 入口
   startSolo() {
     this.mode = 'solo'; this.myId = 0; this.roster = [{ id: 0, name: this.ui.name(), w: this.settings.weapon }];
-    this.beginHunt(1);
+    this.beginHunt(1, this.quest);
   }
   async hostRoom() {
     this.ui.toast('部屋を準備中…', 8000);
@@ -130,12 +133,18 @@ class Game {
     this.player.tp = !this.player.tp; this.settings.view = this.player.tp ? 'tp' : 'fp'; this.saveSettings();
     this.ui.toast(this.player.tp ? '三人称視点' : '一人称視点', 1200);
   }
-  hostStart() { if (!this.net.isHost) return; this.net.broadcast({ t: 'start', n: this.roster.length }); this.beginHunt(this.roster.length); }
-  again() { if (this.mode === 'solo') this.beginHunt(1); else this.hostStart(); }
+  // 狩猟対象の変更（マルチではホストだけ）
+  setQuest(id) {
+    if (!SPECIES[id] || this.state === 'hunt' || (this.mode === 'multi' && !this.net.isHost)) return;
+    this.quest = this.settings.quest = id; this.saveSettings(); this.boss.reset(1, id); this.ui.renderQuests();
+    if (this.net.isHost) this.net.broadcast({ t: 'quest', q: id });
+  }
+  hostStart() { if (!this.net.isHost) return; this.net.broadcast({ t: 'start', n: this.roster.length, sp: this.quest }); this.beginHunt(this.roster.length, this.quest); }
+  again() { if (this.mode === 'solo') this.beginHunt(1, this.quest); else this.hostStart(); }
 
   toTitle() {
     this.cleanupHunt(); this.net.close(); this.state = 'title'; this.mode = null;
-    this.boss.reset(1); this.ui.show('sTitle');
+    this.quest = this.settings.quest; this.boss.reset(1, this.quest); this.ui.renderQuests(); this.ui.show('sTitle');
   }
   cleanupHunt() {
     this.input.enabled = false; this.input.clear(); this.input.exitLock();
@@ -148,10 +157,11 @@ class Game {
   }
 
   // ---- 狩猟の開始
-  beginHunt(n) {
+  beginHunt(n, sp) {
+    this.huntSp = SPECIES[sp] ? sp : this.quest;
     this.cleanupHunt();
     this.state = 'hunt'; this.time = 0; this.carts = CARTS; this.ended = false; this.introT = 0; this.huntN = n; this.stats = {}; this.breakBy = {}; this.endT = 0;
-    this.boss.reset(n); this.rage = 0; this.audio.setIntensity(0);
+    this.boss.reset(n, this.huntSp); $('bossName').textContent = this.boss.sp.name; this.rage = 0; this.audio.setIntensity(0);
     const idx = Math.max(0, this.roster.findIndex((r) => r.id === this.myId));
     const mine = this.roster[idx] || {};
     this.player.setWeapon(mine.w || this.settings.weapon); this.player.tp = this.settings.view === 'tp'; this.player.lock = this.settings.autoLock ? 2 : 0;
@@ -163,7 +173,7 @@ class Game {
     this.ui.hideMenus(); this.ui.hud(true); this.ui.bossLag = 1;
     this.ui.setMe(this.nameOf(this.myId), PLAYER_COLORS[this.myId % 4]); this.ui.setRoom(this.mode === 'multi' ? this.net.code : '');
     $('feed').innerHTML = ''; $('popups').innerHTML = '';
-    this.ui.banner('狩猟開始', BOSS.name);
+    this.ui.banner('狩猟開始', this.boss.sp.name);
     this.input.clear(); this.input.enabled = true; this.input.requestLock();
     this.audio.init(); this.audio.play('horn', 1);
     if (!this.input.isTouch) setTimeout(() => { if (this.state === 'hunt' && !this.input.locked && !this.input.lockFailed) this.ui.toast('画面をクリックすると視点を動かせます', 4000); }, 900);
@@ -261,7 +271,7 @@ class Game {
     }
     for (const r of rows) { if (win && r.taken === 0) r.aw.push('無傷'); if (this.breakBy.tail === r.id) r.aw.push('尾断ち'); if (this.breakBy.horn === r.id) r.aw.push('角折り'); }
     rows.sort((a, b) => b.dmg - a.dmg);
-    this.emit({ k: 'end', win, time: +time.toFixed(2), rank: win ? rankOf(time) : '-', rows, reason: reason || '' });
+    this.emit({ k: 'end', win, time: +time.toFixed(2), rank: win ? rankOf(time, SPECIES[this.huntSp].ranks) : '-', sp: this.huntSp, rows, reason: reason || '' });
   }
   finish(res) {
     this.state = 'result'; this.ended = true;
@@ -269,7 +279,7 @@ class Game {
     this.audio.stopMusic(); this.audio.breath(false); this.audio.play(res.win ? 'victory' : 'fail', 1);
     this.ui.hud(false); this.player.vm.visible = false; this.player.trail.visible = false; this.hazards.clear();
     if (res.win) {
-      const rec = store.get('ashhorn.records', {}), n = res.rows.length;
+      const rec = store.get('ashhorn.records', {}), n = (res.sp || 'gravald') + ':' + res.rows.length;
       if (!rec[n] || res.time < rec[n].t) { rec[n] = { t: res.time, r: res.rank }; store.set('ashhorn.records', rec); res.best = true; }
     }
     this.ui.showResult(res, this.isAuthority(), this.myId);
@@ -281,7 +291,7 @@ class Game {
       case 'hello': {
         if (this.roster.find((r) => r.id === id) || this.roster.length >= MAX_PLAYERS) return;
         this.roster.push({ id, name: String(m.name || '狩人').slice(0, 10), w: WEAPONS[m.w] ? m.w : 'great' }); this.roster.sort((a, b) => a.id - b.id);
-        this.net.sendTo(id, { t: 'welcome', id, roster: this.roster, state: this.state === 'hunt' ? 'hunt' : 'lobby', n: this.huntN });
+        this.net.sendTo(id, { t: 'welcome', id, roster: this.roster, state: this.state === 'hunt' ? 'hunt' : 'lobby', n: this.huntN, sp: this.huntSp, q: this.quest });
         this.net.broadcast({ t: 'roster', roster: this.roster }, id);
         this.rosterChanged(); this.ui.toast(`${this.nameOf(id)} が参加しました`); this.audio.play('uiBig', 1);
         break;
@@ -317,11 +327,13 @@ class Game {
     switch (m.t) {
       case 'welcome':
         this.myId = m.id; this.roster = m.roster;
-        if (m.state === 'hunt') { this.beginHunt(m.n || this.roster.length); this.boss._first = true; }
+        if (SPECIES[m.q]) { this.quest = m.q; this.boss.reset(1, m.q); this.ui.renderQuests(); }
+        if (m.state === 'hunt') { this.beginHunt(m.n || this.roster.length, m.sp); this.boss._first = true; }
         else { this.state = 'lobby'; this.ui.renderLobby(this.roster, false, this.net.code, this.myId); this.ui.show('sLobby'); }
         break;
       case 'roster': this.roster = m.roster; this.rosterChanged(); break;
-      case 'start': this.beginHunt(m.n); break;
+      case 'start': if (SPECIES[m.sp]) this.quest = m.sp; this.beginHunt(m.n, m.sp); break;
+      case 'quest': if (SPECIES[m.q] && this.state !== 'hunt') { this.quest = m.q; this.boss.reset(1, m.q); this.ui.renderQuests(); } break;
       case 'full': this.net.close(); this.state = 'title'; this.ui.message('満員です', 'この部屋は4人で満員でした。'); break;
       case 'snap':
         if (this.state !== 'hunt') return;
@@ -352,10 +364,11 @@ class Game {
       this.orbit += dt * 0.11;
       if (this.isAuthority() || this.state !== 'result') { if (boss.dead || this.state === 'result') boss.t += dt; }
       boss.animate(dt);
-      let cx = boss.x + Math.sin(this.orbit) * 17, cz = boss.z + Math.cos(this.orbit) * 17;
+      const os = 0.35 + boss.sc * 0.65;
+      let cx = boss.x + Math.sin(this.orbit) * 17 * os, cz = boss.z + Math.cos(this.orbit) * 17 * os;
       const cr = Math.hypot(cx, cz); if (cr > 36) { cx *= 36 / cr; cz *= 36 / cr; } // 外周の岩にめり込まない
-      world.camera.position.set(cx, 2.4 + Math.sin(this.orbit * 0.7) * 0.8, cz);
-      world.camera.lookAt(boss.x, 3.3, boss.z);
+      world.camera.position.set(cx, (2.4 + Math.sin(this.orbit * 0.7) * 0.8) * os, cz);
+      world.camera.lookAt(boss.x, 3.3 * boss.sc, boss.z);
       if (world.camera.fov !== 62) { world.camera.fov = 62; world.camera.updateProjectionMatrix(); }
     }
     this.rage = damp(this.rage, this.state === 'hunt' ? (boss.phase - 1) / 2 : 0, 1.5, dt); world.rage = this.rage;
@@ -387,7 +400,7 @@ class Game {
     if (sa) { sa.g.visible = player.tp; if (player.tp) { sa.apply(player.netState()); sa.update(dt); } else { sa.x = sa.tx = player.x; sa.z = sa.tz = player.z; } }
     // 竜
     if (auth) {
-      if (!boss.active && this.introT > 1.7 && !this.ended) { boss.active = true; boss.start('intro'); boss.pickTarget(); this.audio.startMusic(); }
+      if (!boss.active && this.introT > 1.7 && !this.ended) { boss.active = true; boss.start(boss.sp.intro ? 'intro' : 'idle'); boss.pickTarget(); this.audio.startMusic(); }
       const list = [{ id: this.myId, x: player.x, z: player.z, alive: player.alive }];
       for (const a of this.avatars.values()) list.push({ id: a.id, x: a.x, z: a.z, alive: a.alive });
       boss.hostUpdate(dt, list);
