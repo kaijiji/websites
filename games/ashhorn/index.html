@@ -39,6 +39,8 @@ input,select{font:inherit;color:inherit}
 .bar>b{position:absolute;left:0;top:0;bottom:0;width:100%;transform-origin:left;display:block}
 #hpLag{background:#b3271c}#hp{background:linear-gradient(#9be88f,#4fb84c)}#hp.low{background:linear-gradient(#ff8a6a,#d93a22)}
 #stBar{height:7px;margin-top:4px;width:88%}#st{background:linear-gradient(#ffe37a,#d9a520)}#st.ex{background:#a3482c}
+#spBar{height:5px;margin-top:4px;width:70%}#sp{background:linear-gradient(#ff8a7a,#c8281c)}#spBar.full{border-color:#ffb0a0;box-shadow:0 0 10px rgba(255,80,50,.9);animation:spp .8s infinite alternate}
+@keyframes spp{to{box-shadow:0 0 18px rgba(255,120,80,1)}}#spTag{font-size:11px;font-weight:700;color:#ff8a70;margin-top:5px;text-shadow:0 1px 3px #000;min-height:1em}
 #buffs{margin-top:8px;display:flex;gap:6px;font-size:11px;font-weight:700}
 #buffs span{padding:2px 8px;background:rgba(0,0,0,.6);border:1px solid var(--gold);color:var(--gold)}
 #buffs span.c{border-color:var(--blue);color:var(--blue)}
@@ -107,6 +109,7 @@ body.touch .item{width:44px;height:44px}
 #tbDodge{right:calc(max(22px,env(safe-area-inset-right)) + 108px);bottom:max(18px,env(safe-area-inset-bottom));width:70px;height:70px}
 #tbGuard{right:calc(max(22px,env(safe-area-inset-right)) + 84px);bottom:calc(max(28px,env(safe-area-inset-bottom)) + 84px);width:70px;height:70px}
 #tbPotion{right:max(18px,env(safe-area-inset-right));bottom:calc(max(28px,env(safe-area-inset-bottom)) + 112px);width:58px;height:58px;border-color:rgba(110,220,130,.8)}
+#tbSp{right:calc(max(22px,env(safe-area-inset-right)) + 168px);bottom:calc(max(28px,env(safe-area-inset-bottom)) + 70px);width:58px;height:58px;opacity:.45}#tbSp.ready{opacity:1;border-color:#ff6a50;box-shadow:0 0 14px rgba(255,80,50,.9)}
 #tbPause{right:max(14px,env(safe-area-inset-right));top:74px;width:40px;height:40px;font-size:15px}
 #tbStamp{right:calc(max(14px,env(safe-area-inset-right)) + 48px);top:74px;width:40px;height:40px;font-size:11px}
 #tbView{right:calc(max(14px,env(safe-area-inset-right)) + 96px);top:74px;width:40px;height:40px;font-size:11px}
@@ -137,7 +140,7 @@ label.f{display:block;font-size:11px;font-weight:700;letter-spacing:.15em;color:
 .btn.primary{background:linear-gradient(90deg,rgba(255,106,42,.5),rgba(255,106,42,.12));border-color:var(--ember)}
 .btn.sm{padding:9px 16px;font-size:13px}.btn:disabled{opacity:.4;pointer-events:none}
 .wpn{display:flex;gap:6px}.wpn button{flex:1;padding:8px 4px;border:1px solid var(--line);background:rgba(0,0,0,.5);font-weight:900;font-size:15px;letter-spacing:.1em;transition:all .15s}.wpn button small{display:block;font-size:10px;font-weight:500;color:var(--dim);letter-spacing:.2em}
-.wpn button.sel{border-color:var(--ember);background:rgba(255,106,42,.32)}.wdesc{font-size:11px;color:var(--dim);margin:5px 0 10px;min-height:1.5em;line-height:1.5}
+.wpn button.sel{border-color:var(--ember);background:rgba(255,106,42,.32)}.wdesc{font-size:11px;color:var(--dim);margin:5px 0 10px;min-height:3em;line-height:1.5}
 .row{display:flex;gap:9px}.row>*{flex:1}
 #records{margin-top:16px;font-size:12px;color:var(--dim);line-height:1.9}#records b{color:var(--gold);font-variant-numeric:tabular-nums}
 .foot{margin-top:14px;font-size:10px;color:rgba(163,154,136,.6)}
@@ -194,6 +197,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
     <div class="pname"><i id="meDot"></i><span id="meName"></span></div>
     <div class="bar"><b id="hpLag"></b><b id="hp"></b></div>
     <div class="bar" id="stBar"><b id="st"></b></div>
+    <div class="bar" id="spBar"><b id="sp"></b></div><div id="spTag"></div>
     <div id="buffs"></div>
     <div id="team"></div>
   </div>
@@ -211,7 +215,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
   <div id="hint">
     <div><kbd>WASD</kbd>移動 <kbd>Shift</kbd>ダッシュ <kbd>Space</kbd>回避</div>
     <div><kbd>左クリック</kbd>斬る／長押しで溜め <kbd>右クリック</kbd>ガード</div>
-    <div><kbd>E</kbd>回復薬 <kbd>V</kbd>視点切替 <kbd>Esc</kbd>メニュー</div>
+    <div><kbd>R</kbd>奥義 <kbd>E</kbd>回復薬 <kbd>V</kbd>視点切替 <kbd>Esc</kbd>メニュー</div>
   </div>
   <div id="stamps"><span>1 ナイス！</span><span>2 回復する！</span><span>3 尻尾を狙おう！</span><span>4 助けて！</span></div>
   <div id="items">
@@ -227,6 +231,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
   <div class="tb" id="tbDodge" data-btn="dodge">回避</div>
   <div class="tb" id="tbGuard" data-btn="guard">防御</div>
   <div class="tb" id="tbPotion" data-btn="potion">回復</div>
+  <div class="tb" id="tbSp" data-btn="special">奥義</div>
   <button class="tb" id="tbPause">Ⅱ</button>
   <button class="tb" id="tbStamp">合図</button>
   <button class="tb" id="tbView">視点</button>
@@ -279,6 +284,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
       <dt>左クリック</dt><dd>斬撃（3連コンボ）。<b>長押しで溜め斬り</b>（3段階・溜めすぎると威力が落ちる）</dd>
       <dt>右クリック</dt><dd>ガード。<b>当たる直前に構えると「弾き返し」</b>→直後の攻撃がカウンター斬りに</dd>
       <dt>Space</dt><dd>回避。<b>攻撃をすり抜けると「見切り」</b>で攻撃力アップ＋スタミナ回復</dd>
+      <dt>R</dt><dd><b>奥義</b>。攻撃・見切り・弾き返しで赤いゲージがたまり、満タンで武器ごとの大技を放てる</dd>
       <dt>Shift ／ E</dt><dd>ダッシュ ／ 回復薬（飲む間は無防備）</dd>
       <dt>V ／ 1〜4</dt><dd>一人称・三人称の切り替え ／ 仲間への合図</dd>
     </dl>
@@ -288,6 +294,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
       <dt>攻撃</dt><dd>斬撃（3連コンボ）。<b>長押しで溜め斬り</b>。押したままドラッグで狙える</dd>
       <dt>防御</dt><dd><b>当たる直前に押すと「弾き返し」</b>→直後の攻撃がカウンター斬りに</dd>
       <dt>回避</dt><dd><b>攻撃をすり抜けると「見切り」</b>で攻撃力アップ</dd>
+      <dt>奥義</dt><dd>赤いゲージが満タンで光る。武器ごとの大技を放つ</dd>
     </dl>
     <div class="tips">
       <b>頭</b>が弱点（視点を上げて狙う）。<b>脚</b>を斬り続けると転倒して頭が下りてくる。<b>背中</b>は硬く弾かれる。<br>

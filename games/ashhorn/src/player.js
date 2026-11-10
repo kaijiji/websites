@@ -1,9 +1,9 @@
 // 自分のハンター（一人称）と、他プレイヤーの見た目
 import * as THREE from 'three';
-import { PLAYER, ATTACKS, CHARGE, HITZONE, ARENA_R, WEAPONS } from './config.js';
+import { PLAYER, ATTACKS, CHARGE, HITZONE, ARENA_R, WEAPONS, SP_GAIN } from './config.js';
 import { clamp, lerp, sat, smooth, easeOut, damp, dampAngle, angDiff, rand, TAU } from './util.js';
 
-export const ST = { free: 0, light1: 1, light2: 2, light3: 3, charge: 4, heavy: 5, counter: 6, dodge: 7, guard: 8, hurt: 9, knock: 10, dead: 11, drink: 12, stunned: 13, bounce: 14 };
+export const ST = { free: 0, light1: 1, light2: 2, light3: 3, charge: 4, heavy: 5, counter: 6, dodge: 7, guard: 8, hurt: 9, knock: 10, dead: 11, drink: 12, stunned: 13, bounce: 14, special: 15 };
 const V = new THREE.Vector3(), V2 = new THREE.Vector3();
 
 // 剣の構えキーフレーム [時刻, x, y, z, rx, ry, rz]
@@ -13,6 +13,7 @@ const KEYS = {
   light2: [[0, -0.4, -0.3, -0.62, -0.7, -0.4, 1.1], [0.1, -0.55, -0.18, -0.6, -0.3, -0.3, 1.45], [0.19, 0.05, -0.2, -0.88, -1.3, 0, 0.22], [0.3, 0.66, -0.3, -0.6, -0.9, 0.5, -1.4], [0.56, ...IDLE]],
   light3: [[0, 0.5, -0.25, -0.6, -0.8, 0.3, -1.0], [0.19, 0.28, 0.3, -0.5, 0.95, 0, 0.12], [0.33, 0.14, -0.22, -0.92, -1.35, 0, 0.05], [0.44, 0.1, -0.62, -0.8, -1.95, 0, 0.05], [0.86, ...IDLE]],
   heavy: [[0, 0.48, 0.3, -0.45, 1.15, 0, -0.5], [0.22, 0.0, -0.18, -0.96, -1.3, 0, 0.3], [0.36, -0.36, -0.7, -0.75, -2.0, 0, 0.6], [0.6, -0.3, -0.72, -0.72, -1.9, 0, 0.6], [1.0, ...IDLE]],
+  special: [[0, 0.48, 0.3, -0.45, 1.15, 0, -0.5], [0.8, 0.52, 0.4, -0.38, 1.4, 0, -0.62], [1.0, 0.0, -0.18, -0.96, -1.3, 0, 0.3], [1.14, -0.36, -0.7, -0.75, -2.0, 0, 0.6], [1.6, ...IDLE]],
   counter: [[0, 0.02, -0.2, -0.55, -0.15, 0, 1.25], [0.14, 0.18, -0.06, -0.92, -1.2, 0, -0.7], [0.28, 0.58, 0.36, -0.6, -0.4, 0, -1.6], [0.66, ...IDLE]],
 };
 function sampleKeys(keys, t, out) {
@@ -115,6 +116,7 @@ export class Player {
     const w = (this.w = WEAPONS[this.weaponId]);
     this.defs = {};
     for (const k in ATTACKS) { const d = ATTACKS[k], hv = k.startsWith('heavy') || k === 'counter'; this.defs[k] = { dur: d.dur / w.speed, hit: d.hit / w.speed, next: d.next / w.speed, mv: d.mv * (hv ? w.heavy : w.mv), reach: d.reach + w.reach, step: d.step, strong: d.mv >= 34 }; }
+    if (w.sp.dur) { const k = w.sp.hit / 0.97; this.defs.special = { ...w.sp, strong: true, k }; } // k: 構えアニメの時間倍率
     this.chargeT = CHARGE.lv.map((v) => v * w.charge); this.chargeOver = CHARGE.over * w.charge;
     for (const k in this.models) this.models[k].visible = k === this.weaponId;
   }
@@ -127,6 +129,7 @@ export class Player {
     this.hp = PLAYER.hp; this.hpLag = PLAYER.hp; this.stamina = PLAYER.stamina; this.stamDelay = 0; this.potions = PLAYER.potions;
     this.state = 'free'; this.st = 0; this.combo = 0; this.buffer = null; this.didHit = false;
     this.guarding = false; this.guardT = 0; this.chargeLv = 0; this.attackHeld = 0; this.attackDown = false;
+    this.sp = 0; this.oniT = 0;
     this.buffT = 0; this.counterT = 0; this.invuln = 0; this.hitstop = 0; this.healPool = 0; this.respawnT = 0;
     this.bob = 0; this.bobAmp = 0; this.roll = 0; this.eyeOff = 0; this.fov = 80; this.exhausted = false; this.sprinting = false;
     this.stats = { dmg: 0, hits: 0, just: 0, parry: 0, taken: 0, downs: 0, weak: 0, maxHit: 0 };
@@ -169,9 +172,20 @@ export class Player {
     if (wantAttack) this.buffer = { k: 'attack', t: 0.28 };
     if (wantDodge) this.buffer = { k: 'dodge', t: 0.25 };
     if (this.buffer) { this.buffer.t -= dt; if (this.buffer.t <= 0) this.buffer = null; }
+    this.oniT = Math.max(0, this.oniT - dt);
+    // 奥義：ゲージが満タンのときだけ
+    const wantSp = !this.frozen && inp.pressed('special');
+    const trySpecial = () => {
+      if (this.sp < 100) { env.popup('奥義ゲージが足りない', 'warn'); return false; }
+      const sp = this.w.sp; this.sp = 0; this.buffer = null;
+      env.popup(sp.name, 'just'); env.flash('charge'); env.audio.play('charge3', 1.3); env.audio.play('snarl', 0.5);
+      if (sp.oni) { this.oniT = sp.oni; env.flash('just'); return false; } // 鬼人化はその場で発動して動き続けられる
+      this.startAttack('special');
+      return true;
+    };
     const tryDodge = () => {
       if (this.stamina < 8) { env.popup('スタミナ切れ', 'warn'); return false; }
-      this.stamina -= this.w.dodgeCost; this.stamDelay = P.staminaDelay;
+      this.stamina -= this.w.dodgeCost * (this.oniT > 0 ? 0.5 : 1); this.stamDelay = P.staminaDelay;
       let dx = wishX, dz = wishZ; const m = Math.hypot(dx, dz);
       if (m < 0.2) { dx = -sinY; dz = -cosY; } else { dx /= m; dz /= m; }
       this.dodgeDir = { x: dx, z: dz }; this.dodgeSide = -(dx * cosY - dz * sinY);
@@ -186,6 +200,7 @@ export class Player {
         if (this.sprinting) { this.stamina -= P.sprintDrain * dt; this.stamDelay = 0.25; if (this.stamina <= 0) { this.stamina = 0; this.exhausted = true; } }
         if (wantGuard) { this.guarding = true; this.guardT += dt; speed = P.guardMove; } else this.guardT = 0;
         if (this.buffer && this.buffer.k === 'dodge') { if (tryDodge()) break; this.buffer = null; }
+        if (wantSp && trySpecial()) break;
         if (wantPotion) {
           if (this.potions <= 0) env.popup('回復薬がない', 'warn');
           else if (this.hp >= P.hp) env.popup('体力は満タン', 'warn');
@@ -199,7 +214,9 @@ export class Player {
         }
         break;
       }
-      case 'light1': case 'light2': case 'light3': case 'heavy': case 'counter': {
+      case 'light1': case 'light2': case 'light3': case 'heavy': case 'counter': case 'special': {
+        if (this.oniT > 0) this.st += dt * 0.28; // 鬼人化中は振りが速い
+        if (wantSp && this.state !== 'special' && this.st >= this.atk.def.next && trySpecial()) break;
         const def = this.atk.def;
         speed = 0.9; control = 6;
         if (this.lunge > 0 && this.st < def.hit) { const v = this.lunge / def.hit; this.x += sinY * v * dt; this.z += cosY * v * dt; }
@@ -278,10 +295,16 @@ export class Player {
     const { def, name, mvBonus } = this.atk, env = this.env;
     V.set(this.x, this.eyeY, this.z); this.lookDir(V2);
     if (this.tp) { const c = this.world.camera.position; V2.multiplyScalar(11).add(c).sub(V).normalize(); } // 三人称では照準の先を狙う
-    const hit = boss && boss.active && !boss.dead ? boss.queryHit(V, V2, def.reach, name.startsWith('light') ? 0.52 : 0.44) : null;
+    const hit = boss && boss.active && !boss.dead ? boss.queryHit(V, V2, def.reach, name === 'special' ? 0.75 : name.startsWith('light') ? 0.52 : 0.44) : null;
+    if (name === 'special' && this.w.blunt) { // 砕岩衝：外しても地面を割る
+      const gp = new THREE.Vector3(this.x + Math.sin(this.yaw) * 2.4, 0.2, this.z + Math.cos(this.yaw) * 2.4);
+      env.fx.dust(gp, 50, 11); env.fx.ring(gp.x, gp.z, 0, 22, 9, 0xffd9a0); env.audio.play('slam', 1.1); this.world.addShake(0.8);
+      env.fx.burst(gp, 40, { speed: 13, life: 0.9, size: 0.5, color: [0.6, 0.55, 0.5], gravity: 16, dir: [0, 1, 0], spread: 0.8 });
+    }
     if (!hit) return;
     const blunt = this.w.blunt, hz = blunt && hit.part === 'back' ? 0.7 : HITZONE[hit.part], strong = def.strong, weak = hit.part === 'head';
-    const dmg = Math.max(1, Math.round(def.mv * mvBonus * hz * (this.buffT > 0 ? 1.25 : 1) * rand(0.95, 1.05)));
+    const dmg = Math.max(1, Math.round(def.mv * mvBonus * hz * (this.buffT > 0 ? 1.25 : 1) * (this.oniT > 0 ? 1.2 : 1) * rand(0.95, 1.05)));
+    if (name !== 'special' && this.oniT <= 0) this.sp = Math.min(100, this.sp + dmg * SP_GAIN.perDmg);
     this.stats.dmg += dmg; this.stats.hits++; if (weak) this.stats.weak++; this.stats.maxHit = Math.max(this.stats.maxHit, dmg);
     if (hit.part === 'back' && !blunt) { // 硬い背甲には弾かれる
       env.fx.metalSpark(hit.point); env.audio.play('bounce', 1); env.fx.number(hit.point, String(dmg), 'dull');
@@ -291,9 +314,10 @@ export class Player {
       env.fx.number(hit.point, String(dmg), weak ? 'weak' : strong ? 'strong' : '');
       this.hitstop = strong ? 0.13 : 0.06; this.world.addShake(strong ? 0.5 : 0.22);
       if (name === 'heavy3') { this.world.addShake(0.35); env.flash('impact'); }
+      if (name === 'special') { this.hitstop = 0.22; this.world.addShake(0.7); env.flash('impact'); env.fx.hitSpark(hit.point, true, true); env.audio.play('crack', 0.8); }
     }
     boss.hitFlash = 1;
-    env.dealHit(hit.part, dmg, hit.point, strong, weak, blunt);
+    env.dealHit(hit.part, dmg, hit.point, strong, weak, blunt, name === 'special' ? def.stun || 0 : 0);
   }
 
   // 敵の攻撃を受ける
@@ -303,7 +327,7 @@ export class Player {
     if (this.invuln > 0 || this.state === 'knock') return;
     if (this.state === 'dodge' && this.st >= P.iFrom && this.st <= P.iTo) {
       this.consumed.add(h.key);
-      if (!this.justDone) { this.justDone = true; this.stats.just++; this.buffT = this.w.buff; this.stamina = Math.min(P.stamina, this.stamina + 35); env.audio.play('just', 1); env.popup('見切り！', 'just'); env.flash('just'); env.onJust(); }
+      if (!this.justDone) { this.justDone = true; this.stats.just++; this.sp = Math.min(100, this.sp + SP_GAIN.just); this.buffT = this.w.buff; this.stamina = Math.min(P.stamina, this.stamina + 35); env.audio.play('just', 1); env.popup('見切り！', 'just'); env.flash('just'); env.onJust(); }
       return;
     }
     this.consumed.add(h.key);
@@ -312,7 +336,7 @@ export class Player {
     const facing = Math.abs(angDiff(this.yaw, Math.atan2(-dx, -dz))) < 1.75;
     if (this.guarding && (facing || h.roar)) {
       if (this.guardT <= P.parryWindow && !h.fire) { // ジャストガード
-        this.stats.parry++; this.counterT = 2.6; this.stamina = Math.min(P.stamina, this.stamina + 15);
+        this.stats.parry++; this.counterT = 2.6; this.sp = Math.min(100, this.sp + SP_GAIN.parry); this.stamina = Math.min(P.stamina, this.stamina + 15);
         env.audio.play('parry', 1); env.popup(h.roar ? '耐えた！' : '弾き返し！', 'parry'); env.flash('parry'); this.world.addShake(0.4); this.hitstop = 0.1;
         V.set(this.x + Math.sin(this.yaw) * 0.9, this.eyeY - 0.2, this.z + Math.cos(this.yaw) * 0.9); env.fx.metalSpark(V);
         if (!h.roar) env.parry(h);
@@ -326,6 +350,10 @@ export class Player {
       V.set(this.x + Math.sin(this.yaw) * 0.9, this.eyeY - 0.2, this.z + Math.cos(this.yaw) * 0.9); env.fx.metalSpark(V);
       this.kx += dx / d * h.kb * 0.45; this.kz += dz / d * h.kb * 0.45;
       if (this.stamina <= 0) { this.stamina = 0; this.exhausted = true; env.popup('ガード崩し', 'warn'); if (this.state !== 'dead') this.setState('hurt'); }
+      return;
+    }
+    if (this.state === 'special' && !this.didHit) { // 奥義の構え中は怯まない（被ダメージ半減）
+      if (!h.roar) { this.damage(h.dmg * 0.5); env.audio.play('guard', 0.8); env.flash('hurt'); this.world.addShake(0.4); }
       return;
     }
     if (h.roar) { this.setState('stunned'); env.popup('咆哮で動けない！', 'warn'); this.world.addShake(0.5); return; }
@@ -364,6 +392,7 @@ export class Player {
     else if (s === 'hurt') { roll = 0.12 * Math.sin(sat(this.st / 0.42) * Math.PI); pitchAdd = 0.08 * Math.sin(sat(this.st / 0.42) * Math.PI); }
     else if (s === 'stunned') { roll = Math.sin(this.st * 9) * 0.05; pitchAdd = -0.25 * Math.sin(sat(this.st / 1.7) * Math.PI); fov = 74; }
     else if (s === 'charge') { fov = 80 - this.chargeLv * 2.5; }
+    else if (s === 'special') { const d = this.atk.def; fov = this.st < d.hit ? 80 - 7 * sat(this.st / d.hit) : 80 + 10 * Math.sin(sat((this.st - d.hit) / 0.4) * Math.PI); pitchAdd = -0.09 * Math.sin(sat((this.st - d.hit + 0.05) / 0.35) * Math.PI); }
     else if (s === 'heavy') { fov = 80 + 7 * Math.sin(sat(this.st / 0.5) * Math.PI); pitchAdd = -0.07 * Math.sin(sat((this.st - 0.15) / 0.35) * Math.PI); }
     else if (s === 'light3') { pitchAdd = -0.04 * Math.sin(sat((this.st - 0.25) / 0.3) * Math.PI); }
     this.eyeOff = damp(this.eyeOff, eye, 18, dt); this.roll = damp(this.roll, roll - clamp(this.input.move.x, -1, 1) * 0.012 * sat(sp / 5), 14, dt);
@@ -386,7 +415,8 @@ export class Player {
     const s = this.state, t = this.st, T = this.poseT, time = this.world.time;
     let k = 16;
     this.flask.visible = false;
-    if (KEYS[s]) { sampleKeys(KEYS[s], t * this.w.speed, T); k = 60; }
+    if (s === 'special') { sampleKeys(KEYS.special, t / this.atk.def.k, T); if (t < this.atk.def.hit - 0.1) { T[0] += rand(-0.008, 0.008); T[1] += rand(-0.008, 0.008); } k = 50; }
+    else if (KEYS[s]) { sampleKeys(KEYS[s], t * this.w.speed, T); k = 60; }
     else if (s === 'charge') {
       const lv = this.chargeLv, tr = 0.004 + lv * 0.004;
       T[0] = 0.48 + rand(-tr, tr); T[1] = 0.26 + lv * 0.02 + rand(-tr, tr); T[2] = -0.45; T[3] = 0.95 + lv * 0.08; T[4] = 0; T[5] = -0.5; k = 12;
@@ -413,9 +443,9 @@ export class Player {
     this.off.visible = this.weaponId === 'dual'; this.off.position.set(-P[0] * portrait, P[1], P[2]); this.off.rotation.set(P[3], -P[4], -P[5]);
     // 光：溜め段階・見切りバフ
     const lv = s === 'charge' ? this.chargeLv : 0;
-    const target = 0.5 + lv * 2.2 + (this.buffT > 0 ? 1.6 + Math.sin(time * 9) * 0.4 : 0) + (this.counterT > 0 ? 3 : 0) + (s === 'heavy' ? 3 : 0);
+    const target = 0.5 + lv * 2.2 + (this.buffT > 0 ? 1.6 + Math.sin(time * 9) * 0.4 : 0) + (this.counterT > 0 ? 3 : 0) + (s === 'heavy' ? 3 : 0) + (s === 'special' ? 6 : 0) + (this.oniT > 0 ? 2.5 + Math.sin(time * 14) * 0.6 : 0) + (this.sp >= 100 ? 0.8 + Math.sin(time * 5) * 0.4 : 0);
     this.glowMat.emissiveIntensity = damp(this.glowMat.emissiveIntensity, target, 12, dt);
-    this.glowMat.emissive.setHex(this.counterT > 0 ? 0x7ac8ff : this.buffT > 0 ? 0xffe070 : lv >= 3 ? 0xff4020 : 0xff7a20);
+    this.glowMat.emissive.setHex(this.oniT > 0 || s === 'special' ? 0xff2a2a : this.counterT > 0 ? 0x7ac8ff : this.buffT > 0 ? 0xffe070 : lv >= 3 ? 0xff4020 : 0xff7a20);
     this.world.vmGlow.intensity = (lv * 1.2 + (s === 'heavy' ? 2 : 0) + (this.counterT > 0 ? 1.5 : 0)) * 0.8;
     this.world.vmGlow.color.setHex(this.counterT > 0 ? 0x7ac8ff : 0xffa040);
     // 軌跡
@@ -424,7 +454,7 @@ export class Player {
     if (swinging) {
       const tip = new THREE.Vector3(-0.02, this.w.tip, 0).applyMatrix4(this.sword.matrixWorld), base = new THREE.Vector3(0, this.w.base, 0).applyMatrix4(this.sword.matrixWorld);
       this.trailPts.unshift({ tip, base, a: 1 });
-      this.trailCol = s === 'counter' ? [0.5, 0.8, 1] : s === 'heavy' ? [1, 0.45, 0.15] : [1, 0.85, 0.6];
+      this.trailCol = s === 'special' || this.oniT > 0 ? [1, 0.25, 0.15] : s === 'counter' ? [0.5, 0.8, 1] : s === 'heavy' ? [1, 0.45, 0.15] : [1, 0.85, 0.6];
     }
     for (const p of this.trailPts) p.a -= dt * 5.5;
     while (this.trailPts.length && (this.trailPts[this.trailPts.length - 1].a <= 0 || this.trailPts.length > this.trailN)) this.trailPts.pop();
@@ -504,7 +534,8 @@ export class Avatar {
     g.position.set(this.x, 0, this.z); g.rotation.set(0, this.yaw, 0);
     let bx = 0, by = 0, torsoX = this.speed > 6 ? 0.25 : 0.06 * mv, armX = -0.5, armZ = 0, swX = Math.PI / 2 - 0.9, legA = Math.sin(this.run) * 0.75 * mv, armLX = -Math.sin(this.run) * 0.5 * mv, glow = 0;
     const swing = (t0, t1, a0, a1) => lerp(a0, a1, smooth(sat((t - t0) / (t1 - t0))));
-    if (s === 'light1') { armX = -1.3; armZ = swing(0.08, 0.3, -1.3, 1.2); swX = 1.5; }
+    if (s === 'special') { armX = swing(0.75, 1.0, -3.2, -0.1); swX = 1.2; torsoX = swing(0.75, 1.0, -0.3, 0.6); glow = 4; }
+    else if (s === 'light1') { armX = -1.3; armZ = swing(0.08, 0.3, -1.3, 1.2); swX = 1.5; }
     else if (s === 'light2') { armX = -1.3; armZ = swing(0.08, 0.3, 1.2, -1.3); swX = 1.5; }
     else if (s === 'light3') { armX = swing(0.15, 0.42, -3.0, -0.4); swX = 1.1; torsoX = swing(0.15, 0.42, -0.15, 0.4); }
     else if (s === 'charge') { armX = -2.9; swX = 0.7; torsoX = -0.12; glow = this.lv; }

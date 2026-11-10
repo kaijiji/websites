@@ -530,15 +530,15 @@ export class Boss {
   }
 
   // ホスト：ダメージを受ける。戻り値は全員へ配るイベントの配列
-  applyHit(part, dmg, attackerId, blunt) {
+  applyHit(part, dmg, attackerId, blunt, stunBonus = 0) {
     if (this.dead || !this.active) return;
     this.hp -= dmg;
     this.aggro[attackerId] = (this.aggro[attackerId] || 0) + dmg;
     const sc = this.scale, act = A[this.action], armored = act.armor || this.action === 'flinch';
     if (this.hp <= 0) { this.hp = 0; this.dead = true; this.queue.length = 0; this._hostT = -1; this.start('death'); this.emit({ k: 'dead' }); return; }
     const down = this.action === 'flinch' || this.action === 'topple' || this.action === 'stunned' || this.action === 'crash';
-    if (blunt && part === 'head' && !down) { // 打撃で頭を殴ると気絶値がたまる
-      this.stunAcc += dmg;
+    if (!down && (stunBonus || (blunt && part === 'head'))) { // 打撃で頭を殴ると気絶値がたまる
+      this.stunAcc += (blunt && part === 'head' ? dmg : 0) + stunBonus;
       if (this.stunAcc >= 850 * sc * Math.pow(1.3, this.stunN) && !armored) { this.stunAcc = 0; this.stunN++; this.headTotal += dmg; this.queue.length = 0; this.start('stunned'); this.emit({ k: 'stun', by: attackerId }); return; }
     }
     if (part === 'head') {

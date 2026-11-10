@@ -26,10 +26,14 @@ export const ATTACKS = {
 };
 // 武器：speed=振りの速さ, mv/heavy=威力倍率, charge=溜め時間倍率, buff=見切りの持続, blunt=打撃（気絶を狙える・尻尾は切れない）
 export const WEAPONS = {
-  great: { name: '大剣', sub: '灰断ち', desc: '溜め斬りの一撃が重い。攻守のバランスがよく扱いやすい。', speed: 1, mv: 1, heavy: 1, reach: 0, walk: 1, dodgeCost: 22, guardRate: 0.3, charge: 1, buff: 8, blunt: false, tip: 1.52, base: 0.85 },
-  dual: { name: '双剣', sub: '双牙', desc: '手数と機動力。回避が軽く、見切りの効果が長い。ガードは弱く、間合いは短い。', speed: 1.5, mv: 0.66, heavy: 0.68, reach: -0.45, walk: 1.12, dodgeCost: 14, guardRate: 0.55, charge: 0.65, buff: 13, blunt: false, tip: 1.05, base: 0.5 },
-  hammer: { name: '戦槌', sub: '砕岩', desc: '遅いが高威力。頭を殴り続けると気絶させられ、硬い背中にも弾かれない。尻尾は切れない。', speed: 0.8, mv: 1.25, heavy: 1.25, reach: 0.1, walk: 0.93, dodgeCost: 24, guardRate: 0.3, charge: 1.15, buff: 8, blunt: true, tip: 1.5, base: 1.05 },
+  great: { name: '大剣', sub: '灰断ち', desc: '溜め斬りの一撃が重い。攻守のバランスがよく扱いやすい。', speed: 1, mv: 1, heavy: 1, reach: 0, walk: 1, dodgeCost: 22, guardRate: 0.3, charge: 1, buff: 8, blunt: false, tip: 1.52, base: 0.85,
+    sp: { name: '灰燼断ち', desc: '力を溜めて放つ渾身の一撃。溜めている間は怯まない。', dur: 1.6, hit: 0.97, next: 1.3, mv: 320, reach: 5.0, step: 2.0 } },
+  dual: { name: '双剣', sub: '双牙', desc: '手数と機動力。回避が軽く、見切りの効果が長い。ガードは弱く、間合いは短い。', speed: 1.5, mv: 0.66, heavy: 0.68, reach: -0.45, walk: 1.12, dodgeCost: 14, guardRate: 0.55, charge: 0.65, buff: 13, blunt: false, tip: 1.05, base: 0.5,
+    sp: { name: '鬼人化', desc: '14秒間、攻撃が速く強くなり、回避のスタミナ消費が半分になる。', oni: 14 } },
+  hammer: { name: '戦槌', sub: '砕岩', desc: '遅いが高威力。頭を殴り続けると気絶させられ、硬い背中にも弾かれない。尻尾は切れない。', speed: 0.8, mv: 1.25, heavy: 1.25, reach: 0.1, walk: 0.93, dodgeCost: 24, guardRate: 0.3, charge: 1.15, buff: 8, blunt: true, tip: 1.5, base: 1.05,
+    sp: { name: '砕岩衝', desc: '大地ごと叩き割る一撃。どこに当てても気絶値が大きくたまる。', dur: 1.5, hit: 0.85, next: 1.2, mv: 210, reach: 4.8, step: 2.2, stun: 500 } },
 };
+export const SP_GAIN = { perDmg: 0.08, just: 15, parry: 15 }; // 奥義ゲージ（100で発動可）のたまり方
 export const WEAPON_IDS = ['great', 'dual', 'hammer'];
 export const CHARGE = { start: 0.2, lv: [0.55, 1.15, 1.75], over: 2.7 };
 

@@ -3,7 +3,7 @@ import { clamp } from './util.js';
 
 const KEYMAP = {
   KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
-  ShiftLeft: 'sprint', ShiftRight: 'sprint', Space: 'dodge', KeyE: 'potion', KeyR: 'potion', KeyQ: 'guard', KeyF: 'attack',
+  ShiftLeft: 'sprint', ShiftRight: 'sprint', Space: 'dodge', KeyE: 'potion', KeyR: 'special', KeyC: 'special', KeyQ: 'guard', KeyF: 'attack',
   KeyV: 'view', Digit1: 'stamp1', Digit2: 'stamp2', Digit3: 'stamp3', Digit4: 'stamp4', KeyP: 'pause', Tab: 'pause',
 };
 
@@ -140,7 +140,7 @@ export class Input {
     if (!gp) return null;
     const dz = (v) => (Math.abs(v) < 0.16 ? 0 : (v - Math.sign(v) * 0.16) / 0.84);
     const b = (i) => !!(gp.buttons[i] && (gp.buttons[i].pressed || gp.buttons[i].value > 0.4));
-    const map = { attack: b(7) || b(2), guard: b(6) || b(4), dodge: b(0) || b(1), potion: b(3), sprint: b(5) || b(10), stamp1: b(12), stamp2: b(15), stamp3: b(13), stamp4: b(14) };
+    const map = { attack: b(7) || b(2), guard: b(6) || b(4), dodge: b(0) || b(1), potion: b(3), special: b(11) || b(8), sprint: b(5) || b(10), stamp1: b(12), stamp2: b(15), stamp3: b(13), stamp4: b(14) };
     for (const k in map) { if (map[k] !== !!this._padPrev[k]) { this._set(k, map[k]); this._padPrev[k] = map[k]; } }
     if (b(9) && !this._padPrev.start && this.onPauseRequest && this.enabled) this.onPauseRequest();
     this._padPrev.start = b(9);

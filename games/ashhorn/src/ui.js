@@ -60,7 +60,7 @@ export class UI {
   renderWeapons() {
     const cur = this.g.settings.weapon;
     for (const b of document.querySelectorAll('.wpn button')) b.classList.toggle('sel', b.dataset.w === cur);
-    for (const id of ['wdescTitle', 'wdescLobby']) $(id).textContent = WEAPONS[cur].desc;
+    for (const id of ['wdescTitle', 'wdescLobby']) $(id).innerHTML = `${WEAPONS[cur].desc}<br><b style="color:var(--gold)">奥義「${WEAPONS[cur].sp.name}」</b> ${WEAPONS[cur].sp.desc}`;
   }
   name() { return ($('name').value.trim() || '狩人').slice(0, 10); }
 
@@ -117,7 +117,9 @@ export class UI {
     $('st').style.transform = `scaleX(${sat(p.stamina / PLAYER.stamina)})`; $('st').classList.toggle('ex', p.exhausted);
     $('low').style.opacity = p.alive && p.hp < 30 ? (0.45 + Math.sin(performance.now() / 180) * 0.25) * (1 - p.hp / 30) + 0.2 : 0;
     $('potN').textContent = p.potions;
-    const buffs = (p.buffT > 0 ? `<span>見切り ${Math.ceil(p.buffT)}</span>` : '') + (p.counterT > 0 ? '<span class="c">カウンター可</span>' : '');
+    $('sp').style.transform = `scaleX(${sat(p.sp / 100)})`; const full = p.sp >= 100;
+    if (full !== this._spFull) { this._spFull = full; $('spBar').classList.toggle('full', full); $('tbSp').classList.toggle('ready', full); $('spTag').textContent = full ? `奥義「${p.w.sp.name}」発動可` : ''; }
+    const buffs = (p.oniT > 0 ? `<span style="border-color:#ff5a3a;color:#ff5a3a">鬼人化 ${Math.ceil(p.oniT)}</span>` : '') + (p.buffT > 0 ? `<span>見切り ${Math.ceil(p.buffT)}</span>` : '') + (p.counterT > 0 ? '<span class="c">カウンター可</span>' : '');
     if (buffs !== this._buffs) { $('buffs').innerHTML = buffs; this._buffs = buffs; }
     // 溜めゲージ
     const fg = $('ringFg');

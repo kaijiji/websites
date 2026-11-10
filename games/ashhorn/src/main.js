@@ -5,7 +5,7 @@ import { Fx } from './fx.js';
 import { AudioSys } from './audio.js';
 import { Input } from './input.js';
 import { Boss, Hazards } from './boss.js';
-import { Player, Avatar } from './player.js';
+import { Player, Avatar, ST } from './player.js';
 import { Net } from './net.js';
 import { UI, rankOf } from './ui.js';
 import { PLAYER, PLAYER_COLORS, STAMPS, CARTS, QUEST_LIMIT, MAX_PLAYERS, BOSS, WEAPONS } from './config.js';
@@ -42,7 +42,7 @@ class Game {
     this.player = new Player(this.world, this.input, {
       audio: this.audio, fx: this.fx,
       popup: (t, c) => this.ui.popup(t, c), flash: (k) => this.ui.flash(k),
-      dealHit: (part, dmg, pt, strong, weak, blunt) => this.dealHit(part, dmg, pt, strong, weak, blunt),
+      dealHit: (part, dmg, pt, strong, weak, blunt, stun) => this.dealHit(part, dmg, pt, strong, weak, blunt, stun),
       parry: (h) => { if (this.isAuthority()) this.boss.applyParry(this.myId, !!h.parryFlinch); else this.net.send({ t: 'parry', f: h.parryFlinch ? 1 : 0 }); },
       onDown: () => { if (this.isAuthority()) this.playerDown(this.myId); else this.net.send({ t: 'down' }); },
       onJust: () => { if (this.mode === 'solo') this.slowT = 0.32; },
@@ -57,7 +57,7 @@ class Game {
       onMessage: (id, msg) => (this.net.isHost ? this.hostMsg(id, msg) : this.clientMsg(msg)),
       onHostLost: () => { if (this.state !== 'title') { this.cleanupHunt(); this.net.close(); this.state = 'title'; this.ui.message('通信が切れました', 'ホストとの接続が切れました。'); } },
     });
-    this.input.onPauseRequest = () => this.pause();
+    this.input.onPauseRequest = (fromLock) => { if (fromLock && this.introT < 0.6) return; this.pause(); }; // 開始直後の視点ロック解除では止めない
     this.input.onStick = (on, x, y, dx, dy) => this.ui.stick(on, x, y, dx, dy);
     this.applySettings();
     this.fx.resize(innerHeight, this.world.renderer.getPixelRatio());
@@ -227,9 +227,9 @@ class Game {
     }
   }
 
-  dealHit(part, dmg, pt, strong, weak, blunt) {
-    const m = { p: part, d: dmg, x: +pt.x.toFixed(2), y: +pt.y.toFixed(2), z: +pt.z.toFixed(2), s: strong ? 1 : 0, w: weak ? 1 : 0, b: blunt ? 1 : 0 };
-    if (this.isAuthority()) { this.boss.applyHit(part, dmg, this.myId, blunt); if (this.net.isHost) this.net.broadcast({ t: 'ev', e: { k: 'hit', ...m, by: this.myId } }); }
+  dealHit(part, dmg, pt, strong, weak, blunt, stun) {
+    const m = { p: part, d: dmg, x: +pt.x.toFixed(2), y: +pt.y.toFixed(2), z: +pt.z.toFixed(2), s: strong ? 1 : 0, w: weak ? 1 : 0, b: blunt ? 1 : 0, sb: stun || 0 };
+    if (this.isAuthority()) { this.boss.applyHit(part, dmg, this.myId, blunt, stun || 0); if (this.net.isHost) this.net.broadcast({ t: 'ev', e: { k: 'hit', ...m, by: this.myId } }); }
     else this.net.send({ t: 'hit', ...m });
   }
   sendStamp(n) { if (this.state !== 'hunt') return; if (this.isAuthority()) this.emit({ k: 'stamp', pid: this.myId, n }); else this.net.send({ t: 'stamp', n }); }
@@ -289,8 +289,8 @@ class Game {
       case 'ps': { const a = this.avatars.get(id); if (a) a.apply(m.s); if (m.st) this.stats[id] = { dmg: m.st[0], weak: m.st[1], just: m.st[2], parry: m.st[3], taken: m.st[4], downs: m.st[5] }; break; }
       case 'hit': {
         if (this.state !== 'hunt' || this.ended) return;
-        const d = clamp(+m.d || 0, 0, 500);
-        this.boss.applyHit(m.p, d, id, !!m.b);
+        const d = clamp(+m.d || 0, 0, 900);
+        this.boss.applyHit(m.p, d, id, !!m.b, clamp(+m.sb || 0, 0, 600));
         const e = { k: 'hit', x: m.x, y: m.y, z: m.z, s: m.s, w: m.w, d, by: id };
         this.applyEvent(e); this.net.broadcast({ t: 'ev', e }, id);
         break;
@@ -409,7 +409,7 @@ class Game {
       this.snapT = 0;
       if (this.net.isHost) {
         const ps = [[this.myId, player.netState()]];
-        for (const a of this.avatars.values()) ps.push([a.id, [+a.tx.toFixed(2), +a.tz.toFixed(2), +a.tyaw.toFixed(2), a.pitch, Math.max(0, Object.keys({ free: 0, light1: 1, light2: 2, light3: 3, charge: 4, heavy: 5, counter: 6, dodge: 7, guard: 8, hurt: 9, knock: 10, dead: 11, drink: 12, stunned: 13, bounce: 14 }).indexOf(a.state)), +a.st.toFixed(2), a.hp, a.lv, a.adur]]);
+        for (const a of this.avatars.values()) ps.push([a.id, [+a.tx.toFixed(2), +a.tz.toFixed(2), +a.tyaw.toFixed(2), a.pitch, (ST[a.state] ?? 0), +a.st.toFixed(2), a.hp, a.lv, a.adur]]);
         this.net.broadcast({ t: 'snap', b: boss.snapshot(), p: ps, tm: +this.time.toFixed(2), c: this.carts });
       } else {
         const m = { t: 'ps', s: player.netState() };
