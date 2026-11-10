@@ -6,6 +6,7 @@ import { clamp, lerp, sat, smooth, easeOut, damp, dampAngle, angDiff, rand, TAU 
 
 export const ST = { free: 0, light1: 1, light2: 2, light3: 3, charge: 4, heavy: 5, counter: 6, dodge: 7, guard: 8, hurt: 9, knock: 10, dead: 11, drink: 12, stunned: 13, bounce: 14, special: 15 };
 const V = new THREE.Vector3(), V2 = new THREE.Vector3();
+const OPEN = ['topple', 'stunned', 'crash', 'flinch', 'skid']; // 竜が隙だらけの状態
 
 // 剣の構えキーフレーム [時刻, x, y, z, rx, ry, rz]
 const IDLE = [0.4, -0.4, -0.66, -0.62, 0.12, 0.2];
@@ -144,7 +145,7 @@ export class Player {
     this.hp = PLAYER.hp; this.hpLag = PLAYER.hp; this.stamina = PLAYER.stamina; this.stamDelay = 0; this.potions = PLAYER.potions;
     this.state = 'free'; this.st = 0; this.combo = 0; this.buffer = null; this.didHit = false;
     this.guarding = false; this.guardT = 0; this.chargeLv = 0; this.attackHeld = 0; this.attackDown = false;
-    this.sp = 0; this.oniT = 0;
+    this.sp = 0; this.oniT = 0; this.pending = []; this.cmb = { n: 0, dmg: 0, t: 0 }; this.kickT = 0;
     this.buffT = 0; this.counterT = 0; this.invuln = 0; this.hitstop = 0; this.healPool = 0; this.respawnT = 0;
     this.bob = 0; this.bobAmp = 0; this.roll = 0; this.eyeOff = 0; this.fov = 80; this.exhausted = false; this.sprinting = false;
     this.stats = { dmg: 0, hits: 0, just: 0, parry: 0, taken: 0, downs: 0, weak: 0, maxHit: 0 };
@@ -167,6 +168,10 @@ export class Player {
   update(dt, boss) {
     const inp = this.input, P = PLAYER, env = this.env;
     // ヒットストップ中は自分の時間だけ止める
+    // 予約された連続ヒットと連撃カウント（ヒットストップの影響を受けない）
+    for (let i = this.pending.length - 1; i >= 0; i--) { const q = this.pending[i]; q.t -= dt; if (q.t <= 0) { this.pending.splice(i, 1); q.fn(); } }
+    if (this.cmb.t > 0) { this.cmb.t -= dt; if (this.cmb.t <= 0) { this.cmb.n = 0; this.cmb.dmg = 0; } }
+    this.kickT = Math.max(0, this.kickT - dt);
     if (this.hitstop > 0) { this.hitstop -= dt; dt *= 0.06; }
     this.st += dt;
     this.buffT = Math.max(0, this.buffT - dt); this.counterT = Math.max(0, this.counterT - dt); this.invuln = Math.max(0, this.invuln - dt);
@@ -314,12 +319,73 @@ export class Player {
     this.updateViewModel(dt);
   }
 
-  resolveAttack(boss) {
-    const { def, name, mvBonus } = this.atk, env = this.env;
+  // 照準：V=起点, V2=向き
+  aim() {
     const ranged = this.w.ranged;
     V.set(this.x, this.eyeY, this.z); this.lookDir(V2);
     if (this.tp && ranged) V.copy(this.world.camera.position); // 弓は三人称では画面の照準どおりに飛ぶ
     else if (this.tp) { const c = this.world.camera.position; V2.multiplyScalar(11).add(c).sub(V).normalize(); } // 三人称では照準の先を狙う
+    return ranged;
+  }
+  later(t, fn) { this.pending.push({ t, fn }); }
+  // ダメージ計算。竜が隙だらけ（転倒・気絶など）のときは「会心」で1.15倍
+  calc(mv, part, blunt, rangeMul, boss) {
+    const hz = blunt && part === 'back' ? 0.7 : HITZONE[part], open = OPEN.includes(boss.action);
+    const dmg = Math.max(1, Math.round(mv * hz * (this.buffT > 0 ? 1.25 : 1) * (this.oniT > 0 ? 1.2 : 1) * rangeMul * (open ? 1.15 : 1) * rand(0.95, 1.05)));
+    this.stats.dmg += dmg; this.stats.hits++; if (part === 'head') this.stats.weak++; this.stats.maxHit = Math.max(this.stats.maxHit, dmg);
+    // 連撃カウント
+    const c = this.cmb; c.n++; c.dmg += dmg; c.t = 2.6;
+    if (c.n === 10 || c.n === 25 || c.n === 50 || c.n === 100) { this.env.popup(c.n + '連撃！', 'just'); this.env.audio.play('just', 0.5); }
+    return { dmg, weak: part === 'head', open };
+  }
+  // 連続ヒットの1発ぶん（余波・乱舞・連射）
+  tickHit(s, part, mv, i, blunt, pt, rangeMul = 1, pitch = 1, stun = 0) {
+    const boss = this.bossRef, env = this.env;
+    if (!boss || !boss.active || boss.dead || this.state === 'dead' || !s.on) return;
+    const r = this.calc(mv, part, blunt, rangeMul, boss);
+    const p = pt || new THREE.Vector3(s.pos.x + rand(-0.5, 0.5) * s.r, s.pos.y + rand(-0.5, 0.5) * s.r, s.pos.z + rand(-0.5, 0.5) * s.r);
+    env.fx.tickSpark(p, r.weak); env.audio.play('tick', 0.8, 0, pitch * (1 + Math.min(i, 12) * 0.06));
+    env.fx.number(p, String(r.dmg), 'tick' + (r.weak ? ' weak' : '') + (r.open ? ' crit' : ''));
+    this.world.addShake(pitch < 1 ? 0.22 : 0.07); boss.hitFlash = 0.7;
+    if (this.oniT <= 0) this.sp = Math.min(100, this.sp + r.dmg * SP_GAIN.perDmg);
+    env.dealHit(part, r.dmg, p, false, r.weak, blunt, stun);
+  }
+  // 弓：1本の矢。貫通して複数の部位に当たる
+  shoot(mv, big, i, maxHits) {
+    const boss = this.bossRef, env = this.env;
+    if (this.state === 'dead') return;
+    this.aim();
+    const hits = boss && boss.active && !boss.dead ? boss.queryPierce(V, V2, RANGED.reach, 0.035, maxHits) : [];
+    const from = new THREE.Vector3(this.x - Math.cos(this.yaw) * 0.25, this.eyeY - 0.22, this.z + Math.sin(this.yaw) * 0.25).addScaledVector(V2, 1.6);
+    env.fx.tracer(from, new THREE.Vector3().copy(V2).multiplyScalar(hits.length ? hits[hits.length - 1].d + 6 : RANGED.reach).add(V), big);
+    env.audio.play('dodge', big ? 1.6 : 0.8); if (big) env.audio.play('bounce', 0.7);
+    this.kickT = 0.14;
+    hits.forEach((h, j) => {
+      const hd = Math.hypot(h.point.x - this.x, h.point.z - this.z), rm = hd >= RANGED.near && hd <= RANGED.far ? 1 : RANGED.off;
+      if (j === 0 && rm < 1 && i === 0) env.popup(hd < RANGED.near ? '近すぎる' : '遠すぎる', 'warn');
+      this.tickHit(h.s, h.part, mv * (j === 0 ? 1 : 0.6), i + j, false, h.point, rm, 1.15);
+    });
+    if (big && hits.length) { env.flash('impact'); this.world.addShake(0.6); for (let k = 0; k < 6; k++) this.later(0.12 + k * 0.06, () => this.tickHit(hits[0].s, hits[0].part, mv * 0.07, k, false, null, 1, 1.3)); }
+  }
+  // 武器ごとの連続ヒットの出方 → {n:回数, mv:1発の威力(技の威力に対する割合), dt:間隔, d0:開始, pitch}
+  tickPlan(name, lv) {
+    const id = this.weaponId;
+    if (id === 'great') return lv ? { n: [1, 3, 5][lv - 1], mv: 0.07, dt: 0.07, d0: 0.1 } : name === 'special' ? { n: 7, mv: 0.06, dt: 0.06, d0: 0.12 } : null;
+    if (id === 'dual') { if (lv) { const n = [5, 8, 11][lv - 1]; return { n, mv: 0.75 / n, dt: 0.055, d0: 0.05 }; } return name.startsWith('light') || name === 'counter' ? { n: 1, mv: 0.5, dt: 0, d0: 0.07 } : null; }
+    if (id === 'hammer') return lv ? { n: lv, mv: 0.12, dt: 0.16, d0: 0.14, pitch: 0.5 } : name === 'special' ? { n: 3, mv: 0.12, dt: 0.16, d0: 0.14, pitch: 0.5 } : name === 'light3' ? { n: 1, mv: 0.25, dt: 0, d0: 0.14, pitch: 0.5 } : null;
+    return null;
+  }
+
+  resolveAttack(boss) {
+    const { def, name, mvBonus } = this.atk, env = this.env;
+    const lv = name.startsWith('heavy') ? +name[5] : 0, id = this.weaponId;
+    this.bossRef = boss;
+    const ranged = this.aim();
+    if (ranged && (lv || name === 'special')) { // 弓の溜め：貫通矢の連射 ／ 奥義：全部位を貫く一矢
+      if (lv) { const n = [2, 4, 6][lv - 1]; for (let i = 0; i < n; i++) this.later(i * 0.075, () => this.shoot(def.mv * mvBonus / (n * 1.3), false, i, 3)); }
+      else this.shoot(def.mv * mvBonus * 0.6, true, 0, 6);
+      return;
+    }
     const hit = boss && boss.active && !boss.dead ? boss.queryHit(V, V2, ranged ? RANGED.reach : def.reach, ranged ? 0.03 : name === 'special' ? 0.75 : name.startsWith('light') ? 0.52 : 0.44) : null;
     if (name === 'special' && this.w.blunt) { // 砕岩衝：外しても地面を割る
       const gp = new THREE.Vector3(this.x + Math.sin(this.yaw) * 2.4, 0.2, this.z + Math.cos(this.yaw) * 2.4);
@@ -329,24 +395,27 @@ export class Player {
     if (ranged) {
       const from = new THREE.Vector3(this.x - Math.cos(this.yaw) * 0.25, this.eyeY - 0.22, this.z + Math.sin(this.yaw) * 0.25).addScaledVector(V2, 1.6);
       const to = hit ? hit.point : new THREE.Vector3().copy(V2).multiplyScalar(RANGED.reach).add(V);
-      env.fx.tracer(from, to, name === 'special'); env.audio.play('dodge', name === 'special' ? 1.6 : 0.9); if (name === 'special') env.audio.play('bounce', 0.7);
+      env.fx.tracer(from, to, false); env.audio.play('dodge', 0.9);
     }
     if (!hit) return;
     const hd = Math.hypot(hit.point.x - this.x, hit.point.z - this.z), rangeMul = !ranged || (hd >= RANGED.near && hd <= RANGED.far) ? 1 : RANGED.off;
-    const blunt = this.w.blunt, hz = blunt && hit.part === 'back' ? 0.7 : HITZONE[hit.part], strong = def.strong, weak = hit.part === 'head';
-    const dmg = Math.max(1, Math.round(def.mv * mvBonus * hz * (this.buffT > 0 ? 1.25 : 1) * (this.oniT > 0 ? 1.2 : 1) * rangeMul * rand(0.95, 1.05)));
+    const blunt = this.w.blunt, strong = def.strong;
+    const plan = hit.part === 'back' && !blunt ? null : this.tickPlan(name, lv);
+    // 連続ヒットする技は、最初の一撃を軽くして合計が大きく変わらないようにする
+    const mm = lv ? (id === 'dual' ? 0.25 : id === 'bow' ? 1 : 0.8) : id === 'dual' && plan ? 0.6 : 1;
+    const { dmg, weak, open } = this.calc(def.mv * mvBonus * mm, hit.part, blunt, rangeMul, boss);
     if (name !== 'special' && this.oniT <= 0) this.sp = Math.min(100, this.sp + dmg * SP_GAIN.perDmg);
-    this.stats.dmg += dmg; this.stats.hits++; if (weak) this.stats.weak++; this.stats.maxHit = Math.max(this.stats.maxHit, dmg);
     if (hit.part === 'back' && !blunt) { // 硬い背甲には弾かれる
       env.fx.metalSpark(hit.point); env.audio.play('bounce', 1); env.fx.number(hit.point, String(dmg), 'dull');
       this.world.addShake(0.25); this.setState('bounce'); env.popup('弾かれた！', 'warn');
     } else {
       env.fx.hitSpark(hit.point, strong && !ranged, weak); env.audio.play(strong ? 'hitHeavy' : 'hit', 1); if (weak) env.audio.play('weak', 1);
-      env.fx.number(hit.point, String(dmg), weak ? 'weak' : strong ? 'strong' : '');
-      this.hitstop = ranged ? 0 : strong ? 0.13 : 0.06; this.world.addShake(ranged ? 0.08 : strong ? 0.5 : 0.22);
+      env.fx.number(hit.point, String(dmg), (weak ? 'weak' : strong ? 'strong' : '') + (open ? ' crit' : ''));
+      this.hitstop = ranged ? 0 : plan && id === 'dual' ? 0.03 : strong ? 0.13 : 0.06; this.world.addShake(ranged ? 0.08 : strong ? 0.5 : 0.22);
       if (ranged && rangeMul < 1) env.popup(hd < RANGED.near ? '近すぎる' : '遠すぎる', 'warn');
       if (name === 'heavy3') { this.world.addShake(0.35); env.flash('impact'); }
-      if (name === 'special') { this.hitstop = ranged ? 0.05 : 0.22; this.world.addShake(0.7); env.flash('impact'); env.fx.hitSpark(hit.point, !ranged, true); env.audio.play('crack', 0.8); }
+      if (name === 'special') { this.hitstop = 0.22; this.world.addShake(0.7); env.flash('impact'); env.fx.hitSpark(hit.point, true, true); env.audio.play('crack', 0.8); }
+      if (plan) for (let i = 0; i < plan.n; i++) this.later(plan.d0 + i * plan.dt, () => { this.tickHit(hit.s, hit.part, def.mv * mvBonus * plan.mv, i, blunt, null, 1, plan.pitch || 1); if (plan.pitch) env.audio.play('step', 0.7); });
     }
     boss.hitFlash = 1;
     env.dealHit(hit.part, dmg, hit.point, strong, weak, blunt, name === 'special' ? def.stun || 0 : 0);
@@ -451,7 +520,7 @@ export class Player {
     if (this.w.ranged && (atkS || s === 'charge' || (s === 'free' && !this.guarding))) { // 弓の構え
       const draw = s === 'charge' ? 0.5 + this.chargeLv * 0.17 : s === 'special' ? sat(t / this.atk.def.hit) * (t < this.atk.def.hit ? 1 : 0) : 0, kick = atkS && s !== 'special' ? 1 - sat(t / 0.16) : s === 'special' && t >= this.atk.def.hit ? 1 - sat((t - this.atk.def.hit) / 0.2) : 0;
       const up = atkS || s === 'charge' ? 1 : 0, tr = draw * 0.004;
-      T[0] = lerp(0.4, 0.24, up) + rand(-tr, tr); T[1] = lerp(-0.34, -0.14, up) + rand(-tr, tr); T[2] = lerp(-0.6, -0.56, up) + draw * 0.07 + kick * 0.06; T[3] = lerp(-0.3, 0, up) + kick * 0.12; T[4] = lerp(0.3, -0.12, up); T[5] = lerp(0.5, 0.1, up); k = 22;
+      T[0] = lerp(0.4, 0.24, up) + rand(-tr, tr); T[1] = lerp(-0.34, -0.14, up) + rand(-tr, tr); T[2] = lerp(-0.6, -0.56, up) + draw * 0.07 + kick * 0.06 + this.kickT * 0.5; T[3] = lerp(-0.3, 0, up) + kick * 0.12; T[4] = lerp(0.3, -0.12, up); T[5] = lerp(0.5, 0.1, up); k = 22;
       this.models.bow.children[this.models.bow.children.length - 2].position.z = -0.25 + draw * 0.35; this.models.bow.children[this.models.bow.children.length - 1].position.z = -0.9 + draw * 0.35;
       this.models.bow.children[this.models.bow.children.length - 2].visible = this.models.bow.children[this.models.bow.children.length - 1].visible = !(atkS && kick < 1 && t > 0.02 && s !== 'special') && !(s === 'special' && t >= this.atk.def.hit);
     }

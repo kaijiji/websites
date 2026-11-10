@@ -73,6 +73,7 @@ export class Fx {
     this.burst(p, strong ? 10 : 5, { speed: 2, life: 0.22, size: strong ? 2.6 : 1.7, color: [1, 0.8, 0.5], gravity: 0, drag: 4 });
     this.flash(p, strong ? 60 : 26, 0.12);
   }
+  tickSpark(p, weak) { this.burst(p, 10, { speed: 8, life: 0.32, size: 0.3, color: weak ? [1, 0.9, 0.4] : [1, 0.6, 0.2], color2: [1, 0.3, 0.05], gravity: 14 }); } // 連続ヒット用の軽い火花
   metalSpark(p) { this.burst(p, 30, { speed: 12, life: 0.3, size: 0.26, color: [0.8, 0.9, 1], color2: [1, 1, 0.7], gravity: 16 }); this.flash(p, 20, 0.08, 0xbfd8ff); }
   dust(p, n = 16, sp = 4) { this.burst(p, n, { speed: sp, life: 1.1, size: 1.9, color: [0.2, 0.14, 0.11], color2: [0.12, 0.09, 0.08], gravity: -0.6, drag: 2.2, dir: [0, 0.35, 0], spread: 1 }); }
   flash(p, intensity, dur, color = 0xffa050) { this.flashLight.color.setHex(color); this.flashLight.position.copy(p); this.flashLight.intensity = intensity * 2.5; this._flashDecay = intensity * 2.5 / dur; }

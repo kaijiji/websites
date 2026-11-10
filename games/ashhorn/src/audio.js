@@ -78,7 +78,7 @@ export class AudioSys {
   }
 
   // dist: 音源までの距離 [m]（遠いほど小さく）
-  play(name, vol = 1, dist = 0) {
+  play(name, vol = 1, dist = 0, rate = 1) {
     if (!this.ctx || this.ctx.state !== 'running') return;
     const v = vol * clamp(1 / (1 + dist * dist / 500), 0.06, 1);
     const t = this.ctx.currentTime + 0.005;
@@ -93,6 +93,7 @@ export class AudioSys {
         N(t, 0.32, 'lowpass', 5200, 260, 0.8, 1.0 * v, 0.002, this.sfx, 0.5);
         O(t, 'sine', 140, 36, 0.45, 1.0 * v); O(t, 'square', 520, 120, 0.12, 0.2 * v);
         N(t + 0.03, 0.5, 'bandpass', 2400, 700, 3, 0.25 * v, 0.01, this.sfx, 0.6); break;
+      case 'tick': O(t, 'triangle', 900 * rate, 600 * rate, 0.07, 0.3 * v); N(t, 0.05, 'bandpass', 2500 * rate, 1500, 2, 0.32 * v, 0.002); O(t, 'sine', 170, 80, 0.08, 0.3 * v); break;
       case 'weak': O(t, 'triangle', 1500, 2300, 0.14, 0.22 * v, 0.004, this.sfx, 0.5); O(t + 0.05, 'sine', 2300, 3100, 0.2, 0.14 * v, 0.004, this.sfx, 0.5); break;
       case 'bounce': O(t, 'square', 2100, 1500, 0.12, 0.2 * v, 0.001, this.sfx, 0.5); O(t, 'triangle', 3300, 2800, 0.25, 0.18 * v, 0.001, this.sfx, 0.6); N(t, 0.08, 'highpass', 4000, 6000, 1, 0.3 * v); break;
       case 'dodge': N(t, 0.26, 'bandpass', 900, 300, 0.8, 0.3 * v, 0.06); break;

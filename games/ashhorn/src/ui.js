@@ -161,6 +161,8 @@ export class UI {
       _lv.copy(s.pos).project(this.g.world.camera);
       if (_lv.z < 1) { lm.style.display = 'block'; lm.style.transform = `translate(${((_lv.x * 0.5 + 0.5) * innerWidth).toFixed(0)}px,${((-_lv.y * 0.5 + 0.5) * innerHeight).toFixed(0)}px) translate(-50%,-50%) rotate(45deg)`; } else lm.style.display = 'none';
     } else lm.style.display = 'none';
+    const cn = p.cmb.n >= 3 ? p.cmb.n : 0;
+    if (cn !== this._cn) { this._cn = cn; const el = $('combo'); if (cn) { el.innerHTML = `${cn}<small>HIT</small><span>${p.cmb.dmg}</span>`; el.style.fontSize = Math.round(Math.min(64, 34 + cn * 0.7)) + 'px'; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump', 'on'); } else el.classList.remove('on'); }
     $('timer').textContent = fmtTime(time);
     $('carts').innerHTML = `残り <b>${'◆'.repeat(Math.max(0, carts))}${'◇'.repeat(Math.max(0, CARTS - carts))}</b>`;
     // 仲間

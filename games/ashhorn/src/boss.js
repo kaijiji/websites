@@ -709,7 +709,21 @@ export class Boss {
     const along = clamp(V.dot(dir) - best.r * 0.75, 0.6, reach);
     const pt = new THREE.Vector3().copy(dir).multiplyScalar(along).add(origin);
     pt.lerp(best.pos, 0.35);
-    return { part: best.part, point: pt };
+    return { part: best.part, point: pt, s: best };
+  }
+  // 貫通する矢：射線上の部位を手前から順に最大 max 個返す
+  queryPierce(origin, dir, reach, cone, max) {
+    const res = [];
+    for (const s of this.spheres) {
+      if (!s.on) continue;
+      V.copy(s.pos).sub(origin);
+      const d = V.length(); if (d - s.r > reach) continue;
+      const ang = Math.acos(clamp(V.dot(dir) / (d || 1e-6), -1, 1)), angR = d <= s.r ? Math.PI : Math.asin(s.r / d);
+      if (ang - angR > cone) continue;
+      res.push({ s, part: s.part, d, point: new THREE.Vector3().copy(dir).multiplyScalar(Math.max(0.6, d - s.r * 0.5)).add(origin).lerp(s.pos, 0.3) });
+    }
+    res.sort((a, b) => a.d - b.d);
+    return res.slice(0, max);
   }
   // 体へのめり込み防止
   pushOut(p, radius) {

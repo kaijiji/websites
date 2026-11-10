@@ -72,6 +72,11 @@ input,select{font:inherit;color:inherit}
 #dmgLayer{position:absolute;inset:0;overflow:hidden}
 .dmg{position:absolute;left:0;top:0;font-family:var(--serif);font-weight:800;font-size:clamp(18px,2.3vw,28px);color:#fff;text-shadow:0 0 4px #000,0 2px 0 #000;will-change:transform,opacity}
 .dmg.weak{color:#ffd95a;font-size:clamp(24px,3vw,38px)}.dmg.strong{font-size:clamp(24px,3vw,38px);color:#ffb070}.dmg.dull{color:#9aa3ad;font-size:clamp(14px,1.8vw,20px)}
+.dmg.tick{font-size:clamp(15px,1.9vw,23px)}.dmg.tick.weak{font-size:clamp(17px,2.2vw,27px)}.dmg.crit{color:#8dffd2;text-shadow:0 0 10px rgba(80,255,190,.8),0 2px 0 #000}
+#combo{position:absolute;right:max(22px,env(safe-area-inset-right));top:38%;text-align:right;font-family:var(--serif);font-weight:800;opacity:0;transition:opacity .4s;transform-origin:right center}#combo.on{opacity:1}
+#combo>*{display:block}#combo{line-height:1;color:#ffe37a;text-shadow:0 0 16px rgba(255,180,40,.8),0 3px 0 #000}
+#combo small{font-size:14px;letter-spacing:.3em;color:var(--bone)}#combo span{font-family:var(--sans);font-size:15px;font-weight:900;color:#ffb070;margin-top:4px;text-shadow:0 2px 3px #000}
+#combo.bump{animation:bump .18s ease-out}@keyframes bump{0%{transform:scale(1.35)}100%{transform:scale(1)}}
 .dmg.other{color:#cfd6e0;font-size:clamp(12px,1.5vw,17px);opacity:.8}
 #feed{position:absolute;right:max(18px,env(safe-area-inset-right));top:104px;display:flex;flex-direction:column;align-items:flex-end;gap:5px}
 .feed{font-size:12px;font-weight:700;padding:4px 10px;background:rgba(0,0,0,.6);border-right:3px solid var(--gold);animation:feed 4.2s forwards}
@@ -216,6 +221,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
   <div id="feed"></div>
   <div id="cross"><svg id="ring" viewBox="0 0 64 64"><circle id="ringBg" cx="32" cy="32" r="26" stroke="rgba(255,255,255,.18)" opacity="0"/><circle id="ringFg" cx="32" cy="32" r="26" stroke="#ff7a2a" stroke-dasharray="163.4" stroke-dashoffset="163.4"/></svg><div id="dot"></div></div>
   <div id="arrow">◀</div><div id="lockMark"></div>
+  <div id="combo"></div>
   <div id="popups"></div>
   <div id="banner"></div>
   <div id="hint">
@@ -309,6 +315,7 @@ td .aw{font-size:10px;color:var(--gold);border:1px solid var(--gold);padding:0 5
       <dt>注目</dt><dd>押すたびに 頭→胴→尾→解除。選んだ部位へ視点が自動で向く</dd>
     </dl>
     <div class="tips">
+      <b>溜め攻撃は連続ヒット</b>：大剣は余波、双剣は乱舞、戦槌は余震、弓は貫通矢の連射。竜が転倒・気絶中は<b>会心</b>（緑の数字）で威力アップ。<br>
       <b>頭</b>が弱点（視点を上げて狙う）。<b>脚</b>を斬り続けると転倒して頭が下りてくる。<b>背中</b>は硬く弾かれる。<br>
       武器は4種：<b>大剣</b>（溜め斬り）、<b>双剣</b>（手数と回避）、<b>戦槌</b>（頭を殴って気絶）、<b>弓</b>（遠距離・適正距離8〜22m）。<br>
       竜の攻撃は<b>地面の赤い範囲</b>と体力バー下の<b>技名</b>で予告される。緑の表示は攻めどき。<br>
