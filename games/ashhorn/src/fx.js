@@ -23,8 +23,12 @@ export class Fx {
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
       uniforms: { uScale: { value: 1 } },
       vertexShader: `attribute vec3 aCol; attribute float aSize; attribute float aAlpha; varying vec3 vC; varying float vA; uniform float uScale;
-        void main(){ vC = aCol; vA = aAlpha; vec4 mv = modelViewMatrix*vec4(position,1.0); gl_Position = projectionMatrix*mv; gl_PointSize = aAlpha > 0.0 ? uScale*aSize/max(-mv.z,0.3) : 0.0; }`,
-      fragmentShader: `varying vec3 vC; varying float vA; void main(){ float d = length(gl_PointCoord-0.5); if(d>0.5) discard; float f = smoothstep(0.5,0.0,d); gl_FragColor = vec4(vC*vA*f*f*1.6, 1.0); }`,
+        void main(){ vC = aCol; vec4 mv = modelViewMatrix*vec4(position,1.0); gl_Position = projectionMatrix*mv;
+          float px = uScale*aSize/max(-mv.z,0.3); float cap = uScale*0.42;
+          // 大きい粒（炎・煙）は暗めにして、目の前でも画面が白飛びしないようにする
+          vA = aAlpha * mix(1.5, 0.2, smoothstep(0.5, 2.0, aSize)) * min(1.0, cap/max(px,1.0));
+          gl_PointSize = aAlpha > 0.0 ? min(px, cap) : 0.0; }`,
+      fragmentShader: `varying vec3 vC; varying float vA; void main(){ float d = length(gl_PointCoord-0.5); if(d>0.5) discard; float f = smoothstep(0.5,0.0,d); gl_FragColor = vec4(vC*vA*f*f, 1.0); }`,
     });
     this.points = new THREE.Points(g, this.pmat); this.points.frustumCulled = false; this.points.renderOrder = 5;
     this.scene.add(this.points);
@@ -70,7 +74,7 @@ export class Fx {
   }
   metalSpark(p) { this.burst(p, 30, { speed: 12, life: 0.3, size: 0.26, color: [0.8, 0.9, 1], color2: [1, 1, 0.7], gravity: 16 }); this.flash(p, 20, 0.08, 0xbfd8ff); }
   dust(p, n = 16, sp = 4) { this.burst(p, n, { speed: sp, life: 1.1, size: 1.9, color: [0.2, 0.14, 0.11], color2: [0.12, 0.09, 0.08], gravity: -0.6, drag: 2.2, dir: [0, 0.35, 0], spread: 1 }); }
-  flash(p, intensity, dur, color = 0xffa050) { this.flashLight.color.setHex(color); this.flashLight.position.copy(p); this.flashLight.intensity = intensity * 8; this._flashDecay = intensity * 8 / dur; }
+  flash(p, intensity, dur, color = 0xffa050) { this.flashLight.color.setHex(color); this.flashLight.position.copy(p); this.flashLight.intensity = intensity * 2.5; this._flashDecay = intensity * 2.5 / dur; }
 
   ring(x, z, t0, speed, maxR, color = 0xff7a2a) {
     const m = new THREE.Mesh(this.ringGeo, new THREE.MeshBasicMaterial({ color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
@@ -88,7 +92,7 @@ export class Fx {
     m.position.set(x, 0, z); this.scene.add(m);
     this.pillars.push({ m, r, t: 0 });
     _v.set(x, 0.5, z);
-    this.burst(_v, 70, { speed: 20, life: 1.0, size: 0.8, color: [1, 0.5, 0.1], color2: [1, 0.2, 0.02], dir: [0, 1.4, 0], spread: 0.5, gravity: 12, jitter: r });
+    this.burst(_v, 40, { speed: 20, life: 0.9, size: 0.6, color: [1, 0.5, 0.1], color2: [1, 0.2, 0.02], dir: [0, 1.4, 0], spread: 0.5, gravity: 12, jitter: r });
     this.burst(_v, 24, { speed: 6, life: 1.4, size: 3, color: [0.25, 0.12, 0.08], gravity: -1.5, drag: 2, jitter: r });
     this.flash(_v.set(x, 2, z), 80, 0.3);
   }
@@ -139,7 +143,7 @@ export class Fx {
     for (let i = this.pillars.length - 1; i >= 0; i--) {
       const k = this.pillars[i]; k.t += dt;
       const f = k.t / 0.7;
-      k.m.scale.set(k.r * (0.6 + f * 0.5), 2 + f * 16, k.r * (0.6 + f * 0.5)); k.m.material.opacity = sat(1 - f) * 0.85;
+      k.m.scale.set(k.r * (0.6 + f * 0.5), 2 + f * 16, k.r * (0.6 + f * 0.5)); k.m.material.opacity = sat(1 - f) * 0.5;
       if (f >= 1) { this.scene.remove(k.m); k.m.material.dispose(); this.pillars.splice(i, 1); }
     }
     for (let i = this.balls.length - 1; i >= 0; i--) {

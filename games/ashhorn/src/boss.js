@@ -17,7 +17,7 @@ function buildModel(b) {
   const hide = new THREE.MeshStandardMaterial({ color: 0x322c29, roughness: 0.82, metalness: 0.05, flatShading: true });
   const plate = new THREE.MeshStandardMaterial({ color: 0x5a5049, roughness: 0.7, metalness: 0.1, flatShading: true });
   const bone = new THREE.MeshStandardMaterial({ color: 0xc9bea6, roughness: 0.55, flatShading: true });
-  const magma = new THREE.MeshStandardMaterial({ color: 0x1a0500, emissive: 0xff4a12, emissiveIntensity: 2.2, roughness: 0.6, flatShading: true });
+  const magma = new THREE.MeshStandardMaterial({ color: 0x1a0500, emissive: 0xe03a0c, emissiveIntensity: 1.4, roughness: 0.6, flatShading: true });
   const eye = new THREE.MeshBasicMaterial({ color: 0xffd870, fog: false });
   b.mats = { hide, plate, bone, magma, eye };
   const icoG = new THREE.IcosahedronGeometry(1, 1), boxG = new THREE.BoxGeometry(1, 1, 1), coneG = new THREE.ConeGeometry(1, 1, 5);
@@ -35,7 +35,7 @@ function buildModel(b) {
   add(body, icoG, hide, 0, -0.05, -0.9, 1.6, 1.45, 2.0);
   add(body, icoG, hide, 0, 0.0, -2.4, 1.42, 1.35, 1.55);
   add(body, icoG, magma, 0, -0.72, -0.1, 1.18, 0.95, 2.7);   // 腹の溶岩光
-  add(body, icoG, magma, 0, -0.3, 2.3, 1.0, 1.1, 1.0);        // 喉元
+  add(body, icoG, magma, 0, -0.55, 2.0, 0.7, 0.75, 0.9);       // 喉元
   // 背甲と背びれ
   for (let i = 0; i < 8; i++) {
     const z = 2.5 - i * 0.78, w = 1.9 - Math.abs(i - 2.5) * 0.2, y = 1.42 + Math.sin((i / 7) * Math.PI) * 0.32 - (i > 5 ? 0.25 : 0);
@@ -313,7 +313,7 @@ A.breath = { // ap[0] = 薙ぎ払う向き
       b.env.fx.burst({ x: m.x + Math.cos(a) * r, y: m.y + rand(-1.5, 1.5), z: m.z + Math.sin(a) * r }, 2, { speed: 6, dir: [-Math.cos(a) * 1.2, 0, -Math.sin(a) * 1.2], spread: 0.1, life: 0.4, size: 0.4, color: [1, 0.6, 0.2], gravity: 0, drag: 0 });
     } else if (t > 1.0 && t < 3.0) {
       const ang = b.yaw + breathSweep(b, t), dx = Math.sin(ang), dz = Math.cos(ang);
-      b.env.fx.burst(m, 9, { speed: 27, dir: [dx, -0.2, dz], spread: 0.16, life: 0.68, size: 2.6, color: [1, 0.75, 0.25], color2: [1, 0.25, 0.04], gravity: -3, drag: 0.6, jitter: 0.5 });
+      b.env.fx.burst(m, 6, { speed: 27, dir: [dx, -0.2, dz], spread: 0.16, life: 0.68, size: 2.4, color: [1, 0.75, 0.25], color2: [1, 0.25, 0.04], gravity: -3, drag: 0.6, jitter: 0.5 });
       b.env.fx.burst(m, 2, { speed: 20, dir: [dx, -0.15, dz], spread: 0.2, life: 1.0, size: 3.4, color: [0.3, 0.12, 0.06], gravity: -4, drag: 0.8 });
       b.env.shake(dt * 0.5, b.x, b.z, 30);
       b.env.audio.breath(true, clamp(1 / (1 + b.distLocal() * b.distLocal() / 500), 0.1, 1));
@@ -662,10 +662,10 @@ export class Boss {
     // 発光
     this.hitFlash = Math.max(0, this.hitFlash - dt * 9);
     const rage = this.phase - 1;
-    const glow = 1.9 + rage * 1.3 + Math.sin(tt * 3.2) * 0.35 + P.glow * 4.5 + this.hitFlash * 3;
+    const glow = 1.15 + rage * 0.8 + Math.sin(tt * 3.2) * 0.25 + P.glow * 2.6 + this.hitFlash * 2;
     this.mats.magma.emissiveIntensity = Math.max(0.05, this.dead ? glow * 0.4 : glow);
     this.mats.hide.emissive.setRGB(this.hitFlash * 0.5 + rage * 0.02, this.hitFlash * 0.2, this.hitFlash * 0.08);
-    this.light.intensity = Math.max(0, (50 + rage * 50 + P.glow * 260) * (this.dead ? 0.2 : 1));
+    this.light.intensity = Math.max(0, (45 + rage * 40 + P.glow * 150) * (this.dead ? 0.2 : 1));
     this.mats.eye.color.setHex(this.dead ? 0x221a10 : rage >= 1 ? 0xff5030 : 0xffd870);
     // 判定球の位置を更新
     r.updateMatrixWorld(true);
